@@ -1,6 +1,9 @@
 import { createLogger } from '@media-downloader/logger';
 import { setupWorkers } from './worker';
 
+export { processDownload, identityPool } from './engine';
+export { CobaltFallback } from './fallback';
+
 const logger = createLogger('downloader');
 
 async function start() {

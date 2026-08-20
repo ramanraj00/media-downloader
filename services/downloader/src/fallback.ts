@@ -9,8 +9,8 @@ export class CobaltFallback {
   private failedApis: Record<string, number> = {};
   private cooldownMs = 300000; // 5 minutes
 
-  constructor() {
-    this.apis = [
+  constructor(customApis?: string[]) {
+    this.apis = customApis || [
       'https://api.cobalt.tools',
       'https://cobalt-api.kwiatekmateusz.pl',
       'https://cobalt.wuk.sh'

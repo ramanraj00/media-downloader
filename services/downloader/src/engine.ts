@@ -5,6 +5,7 @@ import { TwitterAdapter } from './platforms/twitter';
 import { TikTokAdapter } from './platforms/tiktok';
 import { RedditAdapter } from './platforms/reddit';
 import { CobaltFallback } from './fallback';
+export { CobaltFallback };
 import { config } from '@media-downloader/config';
 import fs from 'fs';
 import path from 'path';
