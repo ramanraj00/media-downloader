@@ -5,21 +5,32 @@ import fs from 'fs';
 import path from 'path';
 
 export class CobaltFallback {
-  private apis: string[];
   private failedApis: Record<string, number> = {};
   private cooldownMs = 300000; // 5 minutes
+  private customApis?: string[];
 
   constructor(customApis?: string[]) {
-    this.apis = customApis || [
+    this.customApis = customApis;
+  }
+
+  private get apis(): string[] {
+    if (this.customApis && this.customApis.length > 0) {
+      return this.customApis;
+    }
+    if (process.env.COBALT_APIS) {
+      return process.env.COBALT_APIS.split(',').map(u => u.trim());
+    }
+    return [
       'https://api.cobalt.tools',
-      'https://cobalt-api.kwiatekmateusz.pl',
-      'https://cobalt.wuk.sh'
+      'https://co.wuk.sh',
+      'https://cobalt.qwyx.icu'
     ];
   }
 
   private getHealthyApis(): string[] {
     const now = Date.now();
-    const healthy = this.apis.filter(api => {
+    const currentApis = this.apis;
+    const healthy = currentApis.filter(api => {
       const failureTime = this.failedApis[api];
       if (failureTime && now - failureTime < this.cooldownMs) {
         return false; // Still in cooldown
@@ -30,7 +41,7 @@ export class CobaltFallback {
       return true;
     });
 
-    return healthy.length > 0 ? healthy : this.apis;
+    return healthy.length > 0 ? healthy : currentApis;
   }
 
   async download(url: string, outputDir: string): Promise<DownloadResult> {

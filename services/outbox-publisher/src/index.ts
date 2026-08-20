@@ -9,7 +9,7 @@ import { config } from '@media-downloader/config';
 
 const logger = createLogger('outbox-publisher');
 
-async function processPendingEvents() {
+export async function processPendingEvents() {
   try {
     // 1. Claim a pending event in a short transaction
     const claimedEvent = await db.transaction(async (tx) => {
@@ -113,7 +113,7 @@ async function recoverStuckEvents() {
   }
 }
 
-async function setupTerminalFailureHandler() {
+export async function setupTerminalFailureHandler() {
   const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
   const allQueues = [...Object.values(QUEUES.DOWNLOAD), QUEUES.PROCESS, QUEUES.UPLOAD];
 
