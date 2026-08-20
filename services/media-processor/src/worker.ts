@@ -7,6 +7,7 @@ import { QUEUES, ProcessJobData, JobStatus, UploadJobData } from '@media-downloa
 import { db, jobs } from '@media-downloader/db';
 import { eq } from 'drizzle-orm';
 import { normalizeVideo } from './ffmpeg';
+import { calculateFileHash } from '@media-downloader/core';
 
 export async function setupWorker(logger: Logger) {
   const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -19,6 +20,15 @@ export async function setupWorker(logger: Logger) {
       jobLogger.info('Received process job');
       
       try {
+        const jobRecord = await db.query.jobs.findFirst({
+          where: eq(jobs.id, bullJob.data.jobId)
+        });
+        if (!jobRecord) throw new Error('Job record not found');
+        if (jobRecord.status === JobStatus.COMPLETED || jobRecord.status === JobStatus.FAILED_PERMANENTLY) {
+          jobLogger.info({ status: jobRecord.status }, 'Job already in terminal state, skipping processing');
+          return;
+        }
+
         await db.update(jobs)
           .set({ status: JobStatus.PROCESSING_MEDIA, updatedAt: new Date() })
           .where(eq(jobs.id, bullJob.data.jobId));
@@ -31,11 +41,16 @@ export async function setupWorker(logger: Logger) {
           .set({ status: JobStatus.VALIDATING, updatedAt: new Date() })
           .where(eq(jobs.id, bullJob.data.jobId));
         
+        // Calculate file hash for finalization
+        const contentHash = await calculateFileHash(result.filePath);
+        
         // Enqueue to telegram:upload
         const uploadData: UploadJobData = {
           jobId: bullJob.data.jobId,
           processedPath: result.filePath,
-          mediaType: result.mediaType
+          mediaType: result.mediaType,
+          contentHash,
+          fileSize: result.fileSize
         };
         
         await uploadQueue.add('upload', uploadData, {

@@ -5,9 +5,8 @@ import { Logger } from 'pino';
 import { withJobContext } from '@media-downloader/logger';
 import { QUEUES, UploadJobData, JobStatus } from '@media-downloader/types';
 import { db, jobs, users, media } from '@media-downloader/db';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { uploadToTelegram } from './uploader';
-import { calculateFileHash } from '@media-downloader/core';
 import fs from 'fs';
 
 export async function setupWorker(logger: Logger) {
@@ -20,48 +19,78 @@ export async function setupWorker(logger: Logger) {
       jobLogger.info('Received upload job');
       
       try {
-        await db.update(jobs)
-          .set({ status: JobStatus.UPLOADING, updatedAt: new Date() })
-          .where(eq(jobs.id, bullJob.data.jobId));
-        
         const jobRecord = await db.query.jobs.findFirst({
           where: eq(jobs.id, bullJob.data.jobId)
         });
 
         if (!jobRecord) throw new Error('Job record not found');
         
-        // Upload
-        const fileId = await uploadToTelegram(bullJob.data, jobRecord, jobLogger);
-        
-        // Calculate hash and save media record
-        const contentHash = await calculateFileHash(bullJob.data.processedPath);
-        const stat = fs.statSync(bullJob.data.processedPath);
-        
-        await db.insert(media).values({
-          jobId: jobRecord.id,
-          contentHash,
-          fileSize: stat.size,
-        });
-        
-        // Final updates
-        await db.update(jobs)
-          .set({ 
-            status: JobStatus.COMPLETED, 
-            telegramFileId: fileId,
-            completedAt: new Date(),
-            updatedAt: new Date() 
-          })
-          .where(eq(jobs.id, jobRecord.id));
+        let currentStatus = jobRecord.status as JobStatus;
+
+        if (currentStatus === JobStatus.COMPLETED || currentStatus === JobStatus.FAILED_PERMANENTLY) {
+          jobLogger.info({ status: currentStatus }, 'Job already in terminal state, skipping upload');
+          return;
+        }
+
+        if (currentStatus === JobStatus.UPLOADING) {
+          // Upload to Telegram
+          const { fileId, messageId } = await uploadToTelegram(bullJob.data, jobRecord, jobLogger);
           
-        // Free user's active slot
-        const user = await db.query.users.findFirst({
-          where: eq(users.id, jobRecord.userId)
-        });
-        
-        if (user && user.activeJobs > 0) {
-          await db.update(users)
-            .set({ activeJobs: user.activeJobs - 1 })
-            .where(eq(users.id, user.id));
+          // Immediately persist durable identifiers and update state
+          await db.update(jobs)
+            .set({ 
+              status: JobStatus.TELEGRAM_UPLOADED,
+              telegramFileId: fileId,
+              telegramMessageId: messageId,
+              contentHash: bullJob.data.contentHash,
+              fileSize: bullJob.data.fileSize,
+              updatedAt: new Date() 
+            })
+            .where(eq(jobs.id, bullJob.data.jobId));
+            
+          currentStatus = JobStatus.TELEGRAM_UPLOADED;
+        }
+
+        if (currentStatus === JobStatus.TELEGRAM_UPLOADED) {
+          // Read durable metadata from PostgreSQL
+          let finalContentHash = jobRecord.contentHash;
+          let finalFileSize = jobRecord.fileSize;
+          
+          if (!finalContentHash || finalFileSize === null || finalFileSize === undefined) {
+             const updatedJob = await db.query.jobs.findFirst({
+               where: eq(jobs.id, jobRecord.id)
+             });
+             finalContentHash = updatedJob?.contentHash ?? null;
+             finalFileSize = updatedJob?.fileSize ?? null;
+          }
+          
+          if (!finalContentHash || finalFileSize === null || finalFileSize === undefined) {
+             throw new Error('Durable metadata missing from database for finalization');
+          }
+          
+          // Atomic finalization transaction
+          await db.transaction(async (tx) => {
+            // 1. Insert media idempotently
+            await tx.insert(media).values({
+              jobId: jobRecord.id,
+              contentHash: finalContentHash!,
+              fileSize: finalFileSize!,
+            }).onConflictDoNothing({ target: media.jobId });
+            
+            // 2. Mark completed
+            await tx.update(jobs)
+              .set({ 
+                status: JobStatus.COMPLETED, 
+                completedAt: new Date(),
+                updatedAt: new Date() 
+              })
+              .where(eq(jobs.id, jobRecord.id));
+              
+            // 3. Decrement quota safely
+            await tx.update(users)
+              .set({ activeJobs: sql`${users.activeJobs} - 1` })
+              .where(sql`${users.id} = ${jobRecord.userId} AND ${users.activeJobs} > 0`);
+          });
         }
 
         // Cleanup temp file
@@ -74,15 +103,7 @@ export async function setupWorker(logger: Logger) {
         jobLogger.info('Upload completed successfully');
       } catch (error: any) {
         jobLogger.error({ err: error }, 'Upload job failed');
-        
-        await db.update(jobs)
-          .set({ 
-            status: JobStatus.FAILED_PERMANENTLY, 
-            error: error.message,
-            updatedAt: new Date() 
-          })
-          .where(eq(jobs.id, bullJob.data.jobId));
-          
+        // Do not blindly mark FAILED_PERMANENTLY here. Let BullMQ handle retries.
         throw error;
       }
     },

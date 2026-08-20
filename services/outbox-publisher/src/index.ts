@@ -89,6 +89,32 @@ async function processPendingEvents() {
   }
 }
 
+const LEASE_TIMEOUT_MS = 10_000;
+
+async function recoverStuckEvents() {
+  try {
+    const timeoutLimit = new Date(Date.now() - LEASE_TIMEOUT_MS);
+    const recovered = await db.update(outboxEvents)
+      .set({
+        status: 'pending',
+        updatedAt: new Date()
+      })
+      .where(
+        and(
+          eq(outboxEvents.status, 'processing'),
+          lte(outboxEvents.updatedAt, timeoutLimit)
+        )
+      )
+      .returning({ id: outboxEvents.id });
+
+    if (recovered.length > 0) {
+      logger.warn({ count: recovered.length, eventIds: recovered.map(r => r.id) }, 'Recovered stuck outbox events');
+    }
+  } catch (err) {
+    logger.error({ err }, 'Error in recoverStuckEvents');
+  }
+}
+
 async function startPublisher() {
   logger.info('Starting PostgreSQL Outbox Publisher');
   
@@ -98,6 +124,13 @@ async function startPublisher() {
       logger.error({ err }, 'Unhandled error in processPendingEvents');
     });
   }, 1000);
+
+  // Recovery polling
+  setInterval(() => {
+    recoverStuckEvents().catch(err => {
+      logger.error({ err }, 'Unhandled error in recoverStuckEvents');
+    });
+  }, 5000);
 }
 
 // Start if executed directly

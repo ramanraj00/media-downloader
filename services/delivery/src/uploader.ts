@@ -9,9 +9,10 @@ export async function uploadToTelegram(
   data: UploadJobData, 
   jobRecord: any, 
   logger: Logger
-): Promise<string> {
+): Promise<{ fileId: string; messageId: number }> {
   const file = new InputFile(data.processedPath);
   let fileId = '';
+  let messageId = 0;
 
   try {
     if (jobRecord.statusMessageId) {
@@ -30,27 +31,31 @@ export async function uploadToTelegram(
         caption: `📥 Downloaded via @${bot.botInfo?.username || 'Bot'}`,
       });
       fileId = msg.video.file_id;
+      messageId = msg.message_id;
     } else if (data.mediaType === 'photo') {
       logger.info('Uploading as Photo');
       const msg = await bot.api.sendPhoto(jobRecord.chatId, file, {
         caption: `📥 Downloaded via @${bot.botInfo?.username || 'Bot'}`,
       });
       fileId = msg.photo[0].file_id;
+      messageId = msg.message_id;
     } else if (data.mediaType === 'audio') {
       logger.info('Uploading as Audio');
       const msg = await bot.api.sendAudio(jobRecord.chatId, file, {
         caption: `📥 Downloaded via @${bot.botInfo?.username || 'Bot'}`,
       });
       fileId = msg.audio.file_id;
+      messageId = msg.message_id;
     } else {
       logger.info('Uploading as Document');
       const msg = await bot.api.sendDocument(jobRecord.chatId, file, {
         caption: `📥 Downloaded via @${bot.botInfo?.username || 'Bot'}`,
       });
       fileId = msg.document.file_id;
+      messageId = msg.message_id;
     }
 
-    return fileId;
+    return { fileId, messageId };
   } catch (error: any) {
     logger.error({ err: error }, 'Telegram upload failed');
     

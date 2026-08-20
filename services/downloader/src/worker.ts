@@ -17,6 +17,15 @@ export async function setupWorkers(logger: Logger) {
     jobLogger.info('Received download job');
     
     try {
+      const jobRecord = await db.query.jobs.findFirst({
+        where: eq(jobs.id, bullJob.data.jobId)
+      });
+      if (!jobRecord) throw new Error('Job record not found');
+      if (jobRecord.status === JobStatus.COMPLETED || jobRecord.status === JobStatus.FAILED_PERMANENTLY) {
+        jobLogger.info({ status: jobRecord.status }, 'Job already in terminal state, skipping download');
+        return;
+      }
+
       // 1. Update job status to DOWNLOADING
       await db.update(jobs)
         .set({ status: JobStatus.DOWNLOADING, updatedAt: new Date() })

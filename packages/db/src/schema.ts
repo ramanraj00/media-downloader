@@ -23,6 +23,9 @@ export const jobs = pgTable('jobs', {
   retryCount: integer('retry_count').default(0),
   error: text('error'),
   telegramFileId: varchar('telegram_file_id', { length: 255 }),
+  telegramMessageId: integer('telegram_message_id'),
+  contentHash: varchar('content_hash', { length: 64 }),
+  fileSize: integer('file_size'),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
   completedAt: timestamp('completed_at'),
@@ -34,7 +37,7 @@ export const jobs = pgTable('jobs', {
 
 export const media = pgTable('media', {
   id: uuid('id').defaultRandom().primaryKey(),
-  jobId: uuid('job_id').references(() => jobs.id),
+  jobId: uuid('job_id').references(() => jobs.id).unique(),
   contentHash: varchar('content_hash', { length: 64 }),
   filePath: text('file_path'),
   objectKey: text('object_key'),

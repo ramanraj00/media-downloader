@@ -25,6 +25,8 @@ export interface UploadJobData {
   jobId: string;
   processedPath: string;
   mediaType: string;
+  contentHash: string;
+  fileSize: number;
 }
 
 export enum OutboxEventType {

@@ -7,6 +7,7 @@ export enum JobStatus {
   PROCESSING_MEDIA = 'processing_media',
   VALIDATING = 'validating',
   UPLOADING = 'uploading',
+  TELEGRAM_UPLOADED = 'telegram_uploaded',
   COMPLETED = 'completed',
   FAILED = 'failed',
   RETRY_PENDING = 'retry_pending',
@@ -21,7 +22,8 @@ export const ALLOWED_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
   [JobStatus.DOWNLOADING]: [JobStatus.PROCESSING_MEDIA, JobStatus.FAILED],
   [JobStatus.PROCESSING_MEDIA]: [JobStatus.VALIDATING, JobStatus.FAILED],
   [JobStatus.VALIDATING]: [JobStatus.UPLOADING, JobStatus.FAILED],
-  [JobStatus.UPLOADING]: [JobStatus.COMPLETED, JobStatus.FAILED],
+  [JobStatus.UPLOADING]: [JobStatus.TELEGRAM_UPLOADED, JobStatus.FAILED],
+  [JobStatus.TELEGRAM_UPLOADED]: [JobStatus.COMPLETED, JobStatus.FAILED],
   [JobStatus.FAILED]: [JobStatus.RETRY_PENDING, JobStatus.FAILED_PERMANENTLY],
   [JobStatus.RETRY_PENDING]: [JobStatus.QUEUED],
   [JobStatus.COMPLETED]: [],
@@ -41,6 +43,9 @@ export interface Job {
   retryCount: number;
   error?: string;
   telegramFileId?: string;
+  telegramMessageId?: number;
+  contentHash?: string;
+  fileSize?: number;
   createdAt: Date;
   updatedAt: Date;
   completedAt?: Date;
