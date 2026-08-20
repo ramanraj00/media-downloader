@@ -33,3 +33,30 @@ export interface ProcessedMedia {
   fileSize: number;
   wasConverted: boolean;
 }
+
+export interface ProbeStream {
+  index: number;
+  codec_type: string;
+  codec_name?: string;
+  width?: number;
+  height?: number;
+  duration?: number;
+  isDefault?: boolean;
+  codecTypeIndex?: number;
+}
+
+export interface ProbeResult {
+  hasVideo: boolean;
+  hasAudio: boolean;
+  videoCodec?: string;
+  audioCodec?: string;
+  duration?: number;
+  videoDuration?: number;
+  audioDuration?: number;
+  width?: number;
+  height?: number;
+  fileSize: number;
+  container?: string;
+  streams: ProbeStream[];
+  durationMismatch: boolean;
+}
