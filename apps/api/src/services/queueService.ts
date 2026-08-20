@@ -14,7 +14,7 @@ const redditQueue = new Queue(QUEUES.DOWNLOAD.REDDIT, { connection });
 export async function enqueueDownloadJob(platform: string, data: DownloadJobData) {
   let queue: Queue;
   
-  switch (platform) {
+  switch (platform.toLowerCase()) {
     case 'instagram':
       queue = instagramQueue;
       break;

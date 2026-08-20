@@ -6,3 +6,11 @@ dist/
 coverage/
 drizzle/
 cookies/
+*.d.ts
+*.d.ts.map
+apps/*/src/**/*.js
+apps/*/src/**/*.js.map
+services/*/src/**/*.js
+services/*/src/**/*.js.map
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map

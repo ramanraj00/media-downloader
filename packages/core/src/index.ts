@@ -2,5 +2,8 @@ export * from './url';
 export * from './platform';
 export * from './errors';
 export * from './circuitBreaker';
+export * from './distributedCircuitBreaker';
+export * from './identityPool';
+export * from './classifiers';
 export * from './retry';
 export * from './hash';

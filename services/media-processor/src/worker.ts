@@ -4,8 +4,8 @@ import { config } from '@media-downloader/config';
 import { Logger } from 'pino';
 import { withJobContext } from '@media-downloader/logger';
 import { QUEUES, ProcessJobData, JobStatus, UploadJobData } from '@media-downloader/types';
-import { db, jobs } from '@media-downloader/db';
-import { eq } from 'drizzle-orm';
+import { users, jobs, db } from '@media-downloader/db';
+import { eq, sql } from 'drizzle-orm';
 import { normalizeVideo } from './ffmpeg';
 import { calculateFileHash } from '@media-downloader/core';
 import { runProbe, determineMediaType } from './probe';
@@ -88,6 +88,15 @@ export async function setupWorker(logger: Logger) {
         // Calculate file hash for finalization
         const contentHash = await calculateFileHash(result.filePath);
         
+        await db.update(jobs)
+          .set({
+            status: JobStatus.UPLOADING,
+            contentHash,
+            fileSize: result.fileSize,
+            updatedAt: new Date()
+          })
+          .where(eq(jobs.id, bullJob.data.jobId));
+        
         // Enqueue to telegram:upload
         const uploadData: UploadJobData = {
           jobId: bullJob.data.jobId,
@@ -107,13 +116,10 @@ export async function setupWorker(logger: Logger) {
       } catch (error: any) {
         jobLogger.error({ err: error }, 'Process job failed');
         
-        await db.update(jobs)
-          .set({ 
-            status: JobStatus.FAILED_PERMANENTLY, 
-            error: error.message,
-            updatedAt: new Date() 
-          })
-          .where(eq(jobs.id, bullJob.data.jobId));
+        if (error.isRetryable === false) {
+          const { UnrecoverableError } = require('bullmq');
+          throw new UnrecoverableError(error.message);
+        }
           
         throw error;
       }

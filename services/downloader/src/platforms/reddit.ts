@@ -16,7 +16,7 @@ export class RedditAdapter extends PlatformAdapter {
     return domains.some(d => url.includes(d));
   }
 
-  async download(url: string, outputDir: string): Promise<DownloadResult> {
+  async download(url: string, outputDir: string, identityId?: string): Promise<DownloadResult> {
     const opts = this.getBaseYtDlpOpts(outputDir);
     
     const command = `yt-dlp ${opts.join(' ')} --dump-json "${url}"`;

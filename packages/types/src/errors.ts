@@ -7,6 +7,9 @@ export enum ErrorType {
   PRIVATE = 'private',
   TOO_LARGE = 'too_large',
   UNSUPPORTED = 'unsupported',
+  IDENTITY_BLOCKED = 'identity_blocked',
+  IDENTITIES_EXHAUSTED = 'identities_exhausted',
+  CIRCUIT_OPEN = 'circuit_open',
 }
 
 export interface BaseError extends Error {

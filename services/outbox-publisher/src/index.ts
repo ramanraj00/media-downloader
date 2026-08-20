@@ -1,8 +1,11 @@
-import { db, outboxEvents } from '@media-downloader/db';
-import { OutboxEventType, DownloadJobData } from '@media-downloader/types';
-import { eq, and, lte } from 'drizzle-orm';
+import { db, outboxEvents, jobs, users } from '@media-downloader/db';
+import { OutboxEventType, DownloadJobData, QUEUES, JobStatus } from '@media-downloader/types';
+import { eq, and, lte, sql } from 'drizzle-orm';
 import { enqueueDownloadJob } from '../../../apps/api/src/services/queueService';
 import { createLogger } from '@media-downloader/logger';
+import { QueueEvents, Queue } from 'bullmq';
+import Redis from 'ioredis';
+import { config } from '@media-downloader/config';
 
 const logger = createLogger('outbox-publisher');
 
@@ -13,12 +16,7 @@ async function processPendingEvents() {
       const events = await tx
         .select()
         .from(outboxEvents)
-        .where(
-          and(
-            eq(outboxEvents.status, 'pending'),
-            lte(outboxEvents.availableAt, new Date())
-          )
-        )
+        .where(eq(outboxEvents.status, 'pending'))
         .limit(1)
         .for('update', { skipLocked: true });
 
@@ -115,8 +113,71 @@ async function recoverStuckEvents() {
   }
 }
 
+async function setupTerminalFailureHandler() {
+  const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
+  const allQueues = [...Object.values(QUEUES.DOWNLOAD), QUEUES.PROCESS, QUEUES.UPLOAD];
+
+  for (const queueName of allQueues) {
+    const queueEvents = new QueueEvents(queueName, { connection });
+    const queue = new Queue(queueName, { connection });
+
+    queueEvents.on('failed', async ({ jobId, failedReason }) => {
+      if (!jobId) return;
+      try {
+        const job = await queue.getJob(jobId);
+        if (!job) return;
+
+        // Job is terminal if its state in Redis is 'failed'.
+        // If it is going to retry, its state will be 'delayed' or 'waiting'.
+        const state = await job.getState();
+        const isTerminal = state === 'failed';
+
+        const currentJob = await db.query.jobs.findFirst({ where: eq(jobs.id, jobId) });
+        if (!currentJob) return;
+
+        await db.transaction(async (tx) => {
+          if (isTerminal) {
+            // Idempotency: skip if already terminal
+            if (currentJob.status === JobStatus.FAILED_PERMANENTLY || currentJob.status === JobStatus.COMPLETED) {
+              logger.info({ jobId }, 'Job already terminal. Idempotency guard triggered.');
+              return;
+            }
+
+            // TELEGRAM_UPLOADED cannot fail permanently
+            if (currentJob.status === JobStatus.TELEGRAM_UPLOADED) {
+              logger.warn({ jobId }, 'Terminal failure for TELEGRAM_UPLOADED job. Ignored FAILED_PERMANENTLY transition.');
+              return;
+            }
+
+            const result = await tx.update(jobs)
+              .set({ status: JobStatus.FAILED_PERMANENTLY, error: failedReason, updatedAt: new Date() })
+              .where(eq(jobs.id, jobId))
+              .returning();
+              
+            if (result.length > 0) {
+              await tx.update(users)
+                .set({ activeJobs: sql`${users.activeJobs} - 1` })
+                .where(sql`${users.id} = ${currentJob.userId} AND ${users.activeJobs} > 0`);
+                
+              logger.info({ jobId, queueName, failedReason }, 'Job marked FAILED_PERMANENTLY and quota released');
+            }
+          } else {
+            await tx.update(jobs)
+              .set({ status: JobStatus.RETRY_PENDING, error: failedReason, updatedAt: new Date() })
+              .where(eq(jobs.id, jobId));
+          }
+        });
+      } catch (err) {
+        logger.error({ err, jobId, queueName }, 'Failed to handle terminal failure event');
+      }
+    });
+  }
+}
+
 async function startPublisher() {
-  logger.info('Starting PostgreSQL Outbox Publisher');
+  logger.info('Starting PostgreSQL Outbox Publisher and Terminal Failure Handler');
+  
+  await setupTerminalFailureHandler();
   
   // Continuous polling
   setInterval(() => {

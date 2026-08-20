@@ -5,7 +5,7 @@ export abstract class PlatformAdapter {
   
   abstract canHandle(url: string): boolean;
   
-  abstract download(url: string, outputDir: string): Promise<DownloadResult>;
+  abstract download(url: string, outputDir: string, identityId?: string): Promise<DownloadResult>;
 
   protected getBaseYtDlpOpts(outputDir: string): string[] {
     return [

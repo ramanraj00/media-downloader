@@ -4,8 +4,8 @@ import { config } from '@media-downloader/config';
 import { Logger } from 'pino';
 import { withJobContext } from '@media-downloader/logger';
 import { QUEUES, DownloadJobData, JobStatus, ProcessJobData } from '@media-downloader/types';
-import { db, jobs } from '@media-downloader/db';
-import { eq } from 'drizzle-orm';
+import { users, jobs, db } from '@media-downloader/db';
+import { eq, sql } from 'drizzle-orm';
 import { processDownload } from './engine';
 
 export async function setupWorkers(logger: Logger) {
@@ -56,14 +56,10 @@ export async function setupWorkers(logger: Logger) {
     } catch (error: any) {
       jobLogger.error({ err: error }, 'Download job failed');
       
-      // 5. Update job status on failure
-      await db.update(jobs)
-        .set({ 
-          status: error.isRetryable ? JobStatus.RETRY_PENDING : JobStatus.FAILED_PERMANENTLY, 
-          error: error.message,
-          updatedAt: new Date() 
-        })
-        .where(eq(jobs.id, bullJob.data.jobId));
+      if (error.isRetryable === false) {
+        const { UnrecoverableError } = require('bullmq');
+        throw new UnrecoverableError(error.message);
+      }
         
       throw error; // Let BullMQ handle retry if transient
     }

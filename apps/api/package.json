@@ -2,6 +2,8 @@
   "name": "@media-downloader/api",
   "version": "1.0.0",
   "private": true,
+  "main": "dist/services/jobService.js",
+  "types": "dist/services/jobService.d.ts",
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",

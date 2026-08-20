@@ -15,7 +15,7 @@ export class TikTokAdapter extends PlatformAdapter {
     return url.includes('tiktok.com') || url.includes('vm.tiktok.com');
   }
 
-  async download(url: string, outputDir: string): Promise<DownloadResult> {
+  async download(url: string, outputDir: string, identityId?: string): Promise<DownloadResult> {
     const opts = this.getBaseYtDlpOpts(outputDir);
     
     const command = `yt-dlp ${opts.join(' ')} --dump-json "${url}"`;

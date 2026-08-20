@@ -1,4 +1,4 @@
-import { db, jobs, outboxEvents } from '@media-downloader/db';
+import { db, jobs, outboxEvents, users } from '@media-downloader/db';
 import { eq } from 'drizzle-orm';
 import { randomUUID } from 'crypto';
 import http from 'http';
@@ -6,7 +6,6 @@ import { exec } from 'child_process';
 import util from 'util';
 import fs from 'fs';
 import path from 'path';
-import { runProbe } from '../../media-processor/src/probe';
 import { QUEUES } from '@media-downloader/types';
 
 const execAsync = util.promisify(exec);
@@ -24,7 +23,21 @@ if (!token || token === '123:abc' || token === 'your_telegram_bot_token_here') {
 
 // 2. Setup HTTP server for serving test files to Downloader
 let server: any;
-
+// Basic probe logic inline to avoid cross-package TS rootDir error
+async function runProbe(filePath: string) {
+  const { stdout } = await execAsync(`ffprobe -v quiet -print_format json -show_format -show_streams "${filePath}"`);
+  const data = JSON.parse(stdout);
+  const videoStreams = data.streams?.filter((s: any) => s.codec_type === 'video') || [];
+  const audioStreams = data.streams?.filter((s: any) => s.codec_type === 'audio') || [];
+  return {
+    container: data.format?.format_name,
+    videoCodec: videoStreams[0]?.codec_name,
+    audioCodec: audioStreams[0]?.codec_name,
+    streams: data.streams || [],
+    videoDuration: videoStreams[0]?.duration ? parseFloat(videoStreams[0].duration) : undefined,
+    audioDuration: audioStreams[0]?.duration ? parseFloat(audioStreams[0].duration) : undefined
+  };
+}
 async function runCmd(cmd: string) {
   await execAsync(cmd);
 }
@@ -76,6 +89,21 @@ async function startServer() {
 
 // Download from Telegram API helper
 async function downloadFromTelegram(fileId: string, destPath: string) {
+  if (fileId.startsWith('mock_tg_file_')) {
+    const jobId = fileId.replace('mock_tg_file_', '');
+    const mockSavedPath = `/tmp/media-dl/mock_tg_${jobId}.media`;
+    if (fs.existsSync(mockSavedPath)) {
+      fs.copyFileSync(mockSavedPath, destPath);
+      return;
+    }
+    const filename = path.basename(destPath).replace(/^tg_/, '');
+    const srcPath = `${TEST_DIR}/${filename}`;
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, destPath);
+      return;
+    }
+  }
+
   const getFileRes = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${fileId}`);
   const fileData = await getFileRes.json() as any;
   if (!fileData.ok) {
@@ -96,9 +124,12 @@ async function runE2E(id: number, filename: string, expectedState: string) {
   const url = `${SERVER_URL}/${filename}`;
   const urlHash = randomUUID().replace(/-/g, '').substring(0, 32); // mock hash
   
-  // Mock UserId
-  const userId = 1; // Assuming user 1 exists, or we may need to create it
-  // We'll just insert the job. (If user constraint fails, we'd need to insert a user)
+  let userId = 1;
+  try {
+    const user = await db.insert(users).values({ telegramId: Date.now() + id, username: 'test_9f_' + id, activeJobs: 0 }).returning().then(r => r[0]);
+    userId = user.id;
+  } catch(e) {}
+  
   
   try {
     await db.insert(jobs).values({
@@ -114,7 +145,7 @@ async function runE2E(id: number, filename: string, expectedState: string) {
     
     await db.insert(outboxEvents).values({
       aggregateId: jobId,
-      eventType: 'job.received',
+      eventType: 'DOWNLOAD_REQUESTED',
       payload: { jobId, platform: 'INSTAGRAM', url },
       status: 'pending'
     });
@@ -186,8 +217,8 @@ async function runE2E(id: number, filename: string, expectedState: string) {
       console.log(`├── stream count: ${postProbe.streams.length}`);
       console.log(`├── durations (V: ${postProbe.videoDuration}, A: ${postProbe.audioDuration})`);
       
-      if (postProbe.videoCodec && postProbe.videoCodec !== 'h264') {
-        console.log(`❌ Semantic mismatch: Expected h264, got ${postProbe.videoCodec}`);
+      if (postProbe.videoCodec && postProbe.videoCodec !== 'h264' && postProbe.videoCodec !== 'mjpeg') {
+        console.log(`❌ Semantic mismatch: Expected h264 or mjpeg, got ${postProbe.videoCodec}`);
       } else {
         console.log(`✅ Semantic integrity verified`);
       }
@@ -203,12 +234,20 @@ async function runAll() {
   
   console.log('NOTE: Ensure `npm run dev` or the microservice stack is running concurrently!');
   
-  // Test subset for initial trial (1, 10, 11)
+  // Complete 11 E2E Test Matrix
   await runE2E(1, '1_h264_aac.mp4', 'completed');
+  await runE2E(2, '2_h264_only.mp4', 'completed');
+  await runE2E(3, '3_hevc_aac.mp4', 'completed');
+  await runE2E(4, '4_vp9_aac.mkv', 'completed');
+  await runE2E(5, '5_v10_a30.mp4', 'completed');
+  await runE2E(6, '6_v30_a10.mp4', 'completed');
+  await runE2E(7, '7_multi_def1.mp4', 'completed');
+  await runE2E(8, '8_audio_only.ogg', 'completed');
+  await runE2E(9, '9_image.jpg', 'completed');
   await runE2E(10, '10_corrupt.mp4', 'failed_permanently');
-  await runE2E(11, '11_large.mp4', 'failed_permanently'); // Or 'rejected' based on implementation
+  await runE2E(11, '11_large.mp4', 'failed_permanently');
   
-  server.close();
+  if (server) server.close();
   process.exit(0);
 }
 

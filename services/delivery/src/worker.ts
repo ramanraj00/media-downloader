@@ -32,7 +32,7 @@ export async function setupWorker(logger: Logger) {
           return;
         }
 
-        if (currentStatus === JobStatus.UPLOADING) {
+        if (currentStatus === JobStatus.UPLOADING || currentStatus === JobStatus.VALIDATING) {
           // Upload to Telegram
           const { fileId, messageId } = await uploadToTelegram(bullJob.data, jobRecord, jobLogger);
           
@@ -53,15 +53,15 @@ export async function setupWorker(logger: Logger) {
 
         if (currentStatus === JobStatus.TELEGRAM_UPLOADED) {
           // Read durable metadata from PostgreSQL
-          let finalContentHash = jobRecord.contentHash;
-          let finalFileSize = jobRecord.fileSize;
+          let finalContentHash = jobRecord.contentHash || bullJob.data.contentHash;
+          let finalFileSize = jobRecord.fileSize ?? bullJob.data.fileSize;
           
           if (!finalContentHash || finalFileSize === null || finalFileSize === undefined) {
              const updatedJob = await db.query.jobs.findFirst({
                where: eq(jobs.id, jobRecord.id)
              });
-             finalContentHash = updatedJob?.contentHash ?? null;
-             finalFileSize = updatedJob?.fileSize ?? null;
+             finalContentHash = updatedJob?.contentHash ?? bullJob.data.contentHash ?? null;
+             finalFileSize = updatedJob?.fileSize ?? bullJob.data.fileSize ?? null;
           }
           
           if (!finalContentHash || finalFileSize === null || finalFileSize === undefined) {

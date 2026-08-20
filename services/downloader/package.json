@@ -2,6 +2,8 @@
   "name": "@media-downloader/downloader",
   "version": "1.0.0",
   "private": true,
+  "main": "dist/engine.js",
+  "types": "dist/engine.d.ts",
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",

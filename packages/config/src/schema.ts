@@ -3,7 +3,7 @@ import { config as dotenvConfig } from 'dotenv';
 import path from 'path';
 
 // Load .env from monorepo root if available
-dotenvConfig({ path: path.resolve(__dirname, '../../../../.env') });
+dotenvConfig({ path: path.resolve(__dirname, '../../../.env') });
 
 const configSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

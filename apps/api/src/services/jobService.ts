@@ -15,6 +15,95 @@ interface SubmitJobRequest {
   statusMessageId?: number;
 }
 
+export let lockAcquisitionWinnerCounter = 0;
+export function resetLockAcquisitionWinnerCounter() {
+  lockAcquisitionWinnerCounter = 0;
+}
+
+const activeStatuses = [
+  JobStatus.QUEUED,
+  JobStatus.DOWNLOADING,
+  JobStatus.PROCESSING,
+  JobStatus.PROCESSING_MEDIA,
+  JobStatus.VALIDATING,
+  JobStatus.UPLOADING,
+  JobStatus.TELEGRAM_UPLOADED,
+  JobStatus.COMPLETED,
+];
+
+async function waitForJobByHash(urlHash: string) {
+  const pubSubChannel = `pubsub:job:${urlHash}`;
+  const subRedis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
+
+  return new Promise<{ jobId: string; status: string; isDuplicate: true; telegramFileId?: string | null }>((resolve, reject) => {
+    let resolved = false;
+    let pollTimer: NodeJS.Timeout;
+
+    const cleanup = () => {
+      resolved = true;
+      if (pollTimer) clearInterval(pollTimer);
+      subRedis.unsubscribe(pubSubChannel).catch(() => {});
+      subRedis.quit().catch(() => {});
+    };
+
+    subRedis.subscribe(pubSubChannel, (err) => {
+      if (err && !resolved) {
+        // DB polling handles fallback
+      }
+    });
+
+    subRedis.on('message', (_channel, message) => {
+      if (resolved) return;
+      try {
+        const payload = JSON.parse(message);
+        cleanup();
+        resolve({
+          jobId: payload.jobId,
+          status: payload.status || JobStatus.QUEUED,
+          isDuplicate: true,
+          telegramFileId: payload.telegramFileId || null
+        });
+      } catch (e) {
+        // Let poll fallback handle parse failure
+      }
+    });
+
+    const startTime = Date.now();
+    const checkDb = async () => {
+      if (resolved) return;
+      try {
+        const existingJob = await db.query.jobs.findFirst({
+          where: and(
+            eq(jobs.urlHash, urlHash),
+            gt(jobs.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000))
+          ),
+          orderBy: (jobs, { desc }) => [desc(jobs.createdAt)]
+        });
+
+        if (existingJob && activeStatuses.includes(existingJob.status as JobStatus) && !resolved) {
+          cleanup();
+          return resolve({
+            jobId: existingJob.id,
+            status: existingJob.status,
+            isDuplicate: true,
+            telegramFileId: existingJob.telegramFileId
+          });
+        }
+      } catch (err) {
+        // Retry poll
+      }
+
+      if (Date.now() - startTime > 10000 && !resolved) {
+        cleanup();
+        reject(new Error(`Timeout waiting for canonical job creation for hash ${urlHash}`));
+      }
+    };
+
+    checkDb();
+    pollTimer = setInterval(checkDb, 150);
+  });
+}
+
 export async function submitJob(req: SubmitJobRequest) {
   const { url, userId, chatId, statusMessageId } = req;
 
@@ -37,9 +126,22 @@ export async function submitJob(req: SubmitJobRequest) {
 
   if (!user) throw new Error("User not found after upsert");
 
-  // 2. Rate limiting check (user max active jobs)
-  if (user.activeJobs >= config.USER_MAX_ACTIVE_JOBS) {
-    throw new Error(`Rate limit exceeded: You can only have ${config.USER_MAX_ACTIVE_JOBS} active downloads at once.`);
+  // 2. Quick DB check before locking (fast path if job already exists & active)
+  const quickJob = await db.query.jobs.findFirst({
+    where: and(
+      eq(jobs.urlHash, urlHash),
+      gt(jobs.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000))
+    ),
+    orderBy: (jobs, { desc }) => [desc(jobs.createdAt)]
+  });
+
+  if (quickJob && activeStatuses.includes(quickJob.status as JobStatus)) {
+    return {
+      jobId: quickJob.id,
+      status: quickJob.status,
+      isDuplicate: true,
+      telegramFileId: quickJob.telegramFileId
+    };
   }
 
   // 3. Idempotency Check & Redis Lock
@@ -50,38 +152,40 @@ export async function submitJob(req: SubmitJobRequest) {
     lockKey,
     lockToken,
     'EX',
-    15,
+    30,
     'NX'
   );
   
   if (!acquired) {
-    return {
-      jobId: 'pending_lock',
-      status: JobStatus.QUEUED,
-      isDuplicate: true
-    };
+    // Wait for the lock owner to finish creating job / broadcasting
+    return await waitForJobByHash(urlHash);
   }
+
+  await redis.incr('metric:lock_winners');
+  const pubSubChannel = `pubsub:job:${urlHash}`;
 
   try {
     const existingJob = await db.query.jobs.findFirst({
       where: and(
         eq(jobs.urlHash, urlHash),
-        gt(jobs.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000)) // Within last 24h
+        gt(jobs.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1000))
       ),
       orderBy: (jobs, { desc }) => [desc(jobs.createdAt)]
     });
 
-    if (existingJob && [JobStatus.COMPLETED, JobStatus.QUEUED, JobStatus.PROCESSING, JobStatus.DOWNLOADING].includes(existingJob.status as JobStatus)) {
-      return {
+    if (existingJob && activeStatuses.includes(existingJob.status as JobStatus)) {
+      const res = {
         jobId: existingJob.id,
         status: existingJob.status,
         isDuplicate: true,
         telegramFileId: existingJob.telegramFileId
       };
+      await redis.publish(pubSubChannel, JSON.stringify(res));
+      return res;
     }
 
     // 4. Create new job inside a transaction
-    return await db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
       const [newJob] = await tx.insert(jobs).values({
         userId: user.id,
         url,
@@ -135,6 +239,9 @@ export async function submitJob(req: SubmitJobRequest) {
         isDuplicate: false
       };
     });
+
+    await redis.publish(pubSubChannel, JSON.stringify(result));
+    return result;
   } finally {
     await redis.eval(
       `

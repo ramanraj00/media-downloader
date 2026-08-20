@@ -65,3 +65,23 @@ export class UnsupportedURLError extends PermanentError {
     super(message, ErrorType.UNSUPPORTED);
   }
 }
+
+export class IdentityBlockedError extends TransientError {
+  public identityId: string;
+  constructor(message: string, identityId: string, platform?: string) {
+    super(message, ErrorType.IDENTITY_BLOCKED, platform);
+    this.identityId = identityId;
+  }
+}
+
+export class IdentitiesExhaustedError extends TransientError {
+  constructor(message: string = 'All platform identities are currently exhausted', platform?: string) {
+    super(message, ErrorType.IDENTITIES_EXHAUSTED, platform);
+  }
+}
+
+export class CircuitBreakerOpenError extends TransientError {
+  constructor(message: string, platform?: string) {
+    super(message, ErrorType.CIRCUIT_OPEN, platform);
+  }
+}
