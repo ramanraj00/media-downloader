@@ -1,8 +1,7 @@
 import crypto from 'node:crypto';
-import { db, jobs, users } from '@media-downloader/db';
+import { db, jobs, users, outboxEvents } from '@media-downloader/db';
 import { normalizeUrl, hashUrl, detectPlatform, isSupportedUrl, UnsupportedURLError } from '@media-downloader/core';
-import { JobStatus, Platform, DownloadJobData } from '@media-downloader/types';
-import { enqueueDownloadJob } from './queueService';
+import { JobStatus, Platform, DownloadJobData, OutboxEventType } from '@media-downloader/types';
 import { eq, and, gt } from 'drizzle-orm';
 import { config } from '@media-downloader/config';
 import Redis from 'ioredis';
@@ -81,38 +80,61 @@ export async function submitJob(req: SubmitJobRequest) {
       };
     }
 
-    // 4. Create new job
-    const [newJob] = await db.insert(jobs).values({
-      userId: user.id,
-      url,
-      normalizedUrl,
-      urlHash,
-      platform,
-      chatId,
-      statusMessageId,
-      status: JobStatus.QUEUED,
-    }).returning();
+    // 4. Create new job inside a transaction
+    return await db.transaction(async (tx) => {
+      const [newJob] = await tx.insert(jobs).values({
+        userId: user.id,
+        url,
+        normalizedUrl,
+        urlHash,
+        platform,
+        chatId,
+        statusMessageId,
+        status: JobStatus.QUEUED,
+      }).onConflictDoNothing({ target: jobs.urlHash }).returning();
 
-    // 5. Update user active jobs count
-    await db.update(users)
-      .set({ activeJobs: user.activeJobs + 1, totalJobs: user.totalJobs + 1 })
-      .where(eq(users.id, user.id));
+      if (!newJob) {
+        const existingJob = await tx.query.jobs.findFirst({
+          where: eq(jobs.urlHash, urlHash),
+        });
 
-    // 6. Enqueue to BullMQ
-    const jobData: DownloadJobData = {
-      jobId: newJob.id,
-      url: newJob.url,
-      urlHash: newJob.urlHash,
-      platform: newJob.platform,
-    };
+        if (!existingJob) {
+          throw new Error('Job conflict occurred but existing job could not be found');
+        }
 
-    await enqueueDownloadJob(newJob.platform, jobData);
+        return {
+          jobId: existingJob.id,
+          status: existingJob.status,
+          isDuplicate: true,
+          telegramFileId: existingJob.telegramFileId,
+        };
+      }
 
-    return {
-      jobId: newJob.id,
-      status: JobStatus.QUEUED,
-      isDuplicate: false
-    };
+      // 5. Update user active jobs count
+      await tx.update(users)
+        .set({ activeJobs: user.activeJobs + 1, totalJobs: user.totalJobs + 1 })
+        .where(eq(users.id, user.id));
+
+      // 6. Create outbox event
+      const jobData: DownloadJobData = {
+        jobId: newJob.id,
+        url: newJob.url,
+        urlHash: newJob.urlHash,
+        platform: newJob.platform,
+      };
+
+      await tx.insert(outboxEvents).values({
+        eventType: OutboxEventType.DOWNLOAD_REQUESTED,
+        aggregateId: newJob.id,
+        payload: jobData,
+      });
+
+      return {
+        jobId: newJob.id,
+        status: JobStatus.QUEUED,
+        isDuplicate: false
+      };
+    });
   } finally {
     await redis.eval(
       `

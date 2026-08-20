@@ -1,0 +1,24 @@
+{
+  "name": "@media-downloader/outbox-publisher",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "start": "node dist/services/outbox-publisher/src/index.js"
+  },
+  "dependencies": {
+    "@media-downloader/config": "*",
+    "@media-downloader/core": "*",
+    "@media-downloader/db": "*",
+    "@media-downloader/logger": "*",
+    "@media-downloader/types": "*",
+    "bullmq": "^5.12.0",
+    "drizzle-orm": "^0.33.0",
+    "ioredis": "^5.4.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "@types/node": "^20.14.15"
+  }
+}

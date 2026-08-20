@@ -1,4 +1,4 @@
-import { pgTable, serial, varchar, text, timestamp, integer, uuid, bigint, index } from 'drizzle-orm/pg-core';
+import { pgTable, serial, varchar, text, timestamp, integer, uuid, bigint, index, uniqueIndex, jsonb } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
 export const users = pgTable('users', {
@@ -28,7 +28,7 @@ export const jobs = pgTable('jobs', {
   completedAt: timestamp('completed_at'),
 }, (table) => {
   return {
-    urlHashIdx: index('idx_jobs_url_hash').on(table.urlHash),
+    urlHashIdx: uniqueIndex('idx_jobs_url_hash').on(table.urlHash),
   };
 });
 
@@ -49,5 +49,23 @@ export const media = pgTable('media', {
 }, (table) => {
   return {
     contentHashIdx: index('idx_media_content_hash').on(table.contentHash),
+  };
+});
+
+export const outboxEvents = pgTable('outbox_events', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  eventType: varchar('event_type', { length: 50 }).notNull(),
+  aggregateId: uuid('aggregate_id').notNull(),
+  payload: jsonb('payload').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('pending'),
+  attempts: integer('attempts').notNull().default(0),
+  availableAt: timestamp('available_at').notNull().defaultNow(),
+  publishedAt: timestamp('published_at'),
+  lastError: text('last_error'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => {
+  return {
+    outboxPendingIdx: index('idx_outbox_pending').on(table.status, table.availableAt),
   };
 });
