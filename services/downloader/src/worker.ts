@@ -1,21 +1,41 @@
-import { Worker, Job as BullJob, Queue } from 'bullmq';
+import { Worker, Job as BullJob, Queue, DelayedError, UnrecoverableError } from 'bullmq';
 import Redis from 'ioredis';
 import { config } from '@media-downloader/config';
 import { Logger } from 'pino';
 import { withJobContext } from '@media-downloader/logger';
-import { QUEUES, DownloadJobData, JobStatus, ProcessJobData } from '@media-downloader/types';
+import { QUEUES, DownloadJobData, JobStatus, ProcessJobData, Platform } from '@media-downloader/types';
 import { users, jobs, db } from '@media-downloader/db';
 import { eq, sql } from 'drizzle-orm';
 import { processDownload } from './engine';
+import { AdmissionController, IdentitiesExhaustedError } from '@media-downloader/core';
 
 export async function setupWorkers(logger: Logger) {
   const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
   const processQueue = new Queue(QUEUES.PROCESS, { connection });
+  const admission = new AdmissionController(config.REDIS_URL);
+  
+  const admissionLimits: Partial<Record<Platform, number>> = {
+    [Platform.INSTAGRAM]: config.ADMISSION_LIMIT_INSTAGRAM,
+    [Platform.TWITTER]: config.ADMISSION_LIMIT_TWITTER,
+    [Platform.TIKTOK]: config.ADMISSION_LIMIT_TIKTOK,
+    [Platform.REDDIT]: config.ADMISSION_LIMIT_REDDIT,
+    [Platform.UNKNOWN]: 0
+  };
 
   const workerHandler = async (bullJob: BullJob<DownloadJobData>) => {
     const jobLogger = withJobContext(logger, bullJob.data.jobId, bullJob.data.platform);
     jobLogger.info('Received download job');
     
+    const platform = bullJob.data.platform.toLowerCase() as Platform;
+    const limit = admissionLimits[platform] || 0;
+    
+    const admissionToken = await admission.admit(platform, limit);
+    if (!admissionToken) {
+      jobLogger.info({ limit }, 'Platform admission limit reached, delaying job');
+      await bullJob.moveToDelayed(Date.now() + 5000, bullJob.token);
+      throw new DelayedError();
+    }
+
     try {
       const jobRecord = await db.query.jobs.findFirst({
         where: eq(jobs.id, bullJob.data.jobId)
@@ -56,12 +76,19 @@ export async function setupWorkers(logger: Logger) {
     } catch (error: any) {
       jobLogger.error({ err: error }, 'Download job failed');
       
+      if (error instanceof IdentitiesExhaustedError) {
+        jobLogger.info('Capacity exhausted, delaying job without consuming attempt');
+        await bullJob.moveToDelayed(Date.now() + 5000, bullJob.token);
+        throw new DelayedError();
+      }
+      
       if (error.isRetryable === false) {
-        const { UnrecoverableError } = require('bullmq');
         throw new UnrecoverableError(error.message);
       }
         
       throw error; // Let BullMQ handle retry if transient
+    } finally {
+      await admission.release(platform, admissionToken);
     }
   };
 

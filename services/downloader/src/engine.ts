@@ -121,9 +121,7 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
         await identityPool.release(identityId, leaseId, platform, action);
 
         if (error instanceof RateLimitError) {
-          const delay = calculateBackoffDelay(attempt, error.retryAfterMs);
-          await new Promise(r => setTimeout(r, Math.min(delay, 2000)));
-          continue;
+          throw error; // Bubble up to let BullMQ handle the job-level retry/delay
         }
 
         if (error instanceof IdentityBlockedError) {
@@ -132,15 +130,14 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
       }
 
       if (!error.isRetryable || error instanceof IdentitiesExhaustedError) {
-        break; // Stop retrying for permanent errors
+        throw error; // Immediately bubble up permanent errors or capacity exhaustion
       }
 
-      const delay = calculateBackoffDelay(attempt, config.RETRY_BASE_DELAY_MS);
-      await new Promise(r => setTimeout(r, Math.min(delay, 1000)));
+      throw error; // Default: bubble up any other transient error to BullMQ
     }
   }
 
-  if (!result && lastError && (lastError instanceof TransientError || lastError instanceof IdentitiesExhaustedError)) {
+  if (!result && lastError && lastError instanceof TransientError && !(lastError instanceof IdentitiesExhaustedError)) {
     try {
       logger.info({ lastError: lastError.message }, 'Primary adapter exhausted or identities blocked. Attempting Cobalt fallback.');
       result = await fallback.download(job.url, outputDir);

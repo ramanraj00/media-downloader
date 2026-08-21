@@ -17,6 +17,13 @@ const configSchema = z.object({
   PLATFORM_CONCURRENCY_TWITTER: z.coerce.number().default(5),
   PLATFORM_CONCURRENCY_TIKTOK: z.coerce.number().default(5),
   PLATFORM_CONCURRENCY_REDDIT: z.coerce.number().default(6),
+  
+  // Platform-level admission control (independent of per-worker concurrency)
+  ADMISSION_LIMIT_INSTAGRAM: z.coerce.number().default(3),
+  ADMISSION_LIMIT_TWITTER: z.coerce.number().default(3),
+  ADMISSION_LIMIT_TIKTOK: z.coerce.number().default(3),
+  ADMISSION_LIMIT_REDDIT: z.coerce.number().default(3),
+  
   GLOBAL_MAX_WORKERS: z.coerce.number().default(20),
 
   // Retry
