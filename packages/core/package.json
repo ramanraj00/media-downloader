@@ -8,8 +8,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@media-downloader/types": "*",
-    "@media-downloader/logger": "*"
+    "@aws-sdk/client-s3": "^3.1115.0",
+    "@media-downloader/logger": "*",
+    "@media-downloader/types": "*"
   },
   "devDependencies": {
     "typescript": "^5.5.4"

@@ -17,10 +17,11 @@
     "@media-downloader/logger": "*",
     "@media-downloader/types": "*",
     "bullmq": "^5.12.0",
-    "ioredis": "^5.4.1"
+    "ioredis": "^5.4.1",
+    "prom-client": "^15.1.3"
   },
   "devDependencies": {
-    "typescript": "^5.5.4",
-    "@types/node": "^20.14.15"
+    "@types/node": "^20.14.15",
+    "typescript": "^5.5.4"
   }
 }

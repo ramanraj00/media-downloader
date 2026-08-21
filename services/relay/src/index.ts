@@ -50,12 +50,41 @@ export async function processPendingEvents() {
       if (claimedEvent.eventType === OutboxEventType.DOWNLOAD_REQUESTED) {
         const payload = claimedEvent.payload as unknown as DownloadJobData;
         await enqueueDownloadJob(payload.platform, payload);
+      } else if (claimedEvent.eventType === OutboxEventType.JOB_COMPLETED) {
+        const payload = claimedEvent.payload as any;
+        
+        // At-least-once delivery to Telegram (No Redis SETNX guard)
+        // If a crash occurs during delivery, the event remains in 'processing' 
+        // and is later recovered to 'pending', causing a retry (potential duplicate).
+        logger.info({ eventId: claimedEvent.id }, 'Delivering JOB_COMPLETED notification to Bot Service / Telegram');
+        
+        const botToken = config.BOT_TOKEN;
+        if (botToken) {
+          // Forward the pre-uploaded fileId to the user via Telegram Bot API
+          const response = await fetch(`https://api.telegram.org/bot${botToken}/sendVideo`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: payload.chatId,
+              video: payload.telegramFileId,
+              reply_to_message_id: payload.statusMessageId,
+              caption: '✅ Your media is ready!'
+            })
+          });
+          
+          if (!response.ok) {
+            const errText = await response.text();
+            // If it's a 4xx error (e.g. user blocked bot), it's permanent. But for 5xx we throw to retry.
+            if (response.status >= 500 || response.status === 429) {
+              throw new Error(`Telegram API Error: ${response.status} ${errText}`);
+            } else {
+              logger.warn({ errText, eventId: claimedEvent.id }, 'Permanent Telegram error (e.g. blocked), skipping retry');
+            }
+          }
+        }
       } else {
         throw new Error(`Unimplemented event type: ${claimedEvent.eventType}`);
       }
-
-
-
       // 3. Mark as published in a new short update
       await db.update(outboxEvents)
         .set({
@@ -70,7 +99,9 @@ export async function processPendingEvents() {
       logger.error({ eventId: claimedEvent.id, err: error }, 'Failed to publish outbox event');
       
       // 4. Handle failure with exponential backoff and return to pending
-      const delayMs = Math.pow(2, claimedEvent.attempts) * 1000;
+      // Cap the backoff at 10 attempts (approx 17 minutes) to avoid Postgres date overflow
+      const maxAttemptsForBackoff = Math.min(claimedEvent.attempts, 10);
+      const delayMs = Math.pow(2, maxAttemptsForBackoff) * 1000;
       const nextAvailableAt = new Date(Date.now() + delayMs);
 
       await db.update(outboxEvents)
@@ -142,6 +173,18 @@ export async function handleTerminalFailure(jobId: string, failedReason: string,
           .returning();
           
         if (result.length > 0) {
+          // Insert into DLQ for forensic tracking and replay capability
+          const { failedJobs } = require('@media-downloader/db');
+          await tx.insert(failedJobs).values({
+            originalJobId: currentJob.id,
+            queueName: queueName,
+            platform: currentJob.platform,
+            failedReason: failedReason,
+            attemptsMade: job.attemptsMade || 0,
+            jobData: job.data,
+            failedAt: new Date()
+          });
+
           await tx.update(users)
             .set({ activeJobs: sql`${users.activeJobs} - 1` })
             .where(sql`${users.id} = ${currentJob.userId} AND ${users.activeJobs} > 0`);

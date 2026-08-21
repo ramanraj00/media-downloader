@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc",
     "clean": "rm -rf dist",
-    "start": "node dist/services/outbox-publisher/src/index.js"
+    "start": "node dist/services/relay/src/index.js"
   },
   "dependencies": {
     "@media-downloader/config": "*",

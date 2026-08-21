@@ -25,14 +25,14 @@ export async function uploadToTelegram(
   let messageId = 0;
 
   try {
-    if (!bot.botInfo) {
+    if (!bot.isInited()) {
       try {
         await bot.init();
       } catch (e) {
         logger.warn('Failed to initialize bot info');
       }
     }
-    const botName = bot.botInfo?.username ? `@${bot.botInfo.username}` : 'MediaDownloaderBot';
+    const botName = bot.isInited() ? `@${bot.botInfo.username}` : 'MediaDownloaderBot';
 
     if (jobRecord.statusMessageId) {
       // Edit the status message into the video/photo if possible, or delete it and send new

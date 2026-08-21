@@ -1,7 +1,8 @@
 import { createLogger } from '@media-downloader/logger';
 import { setupWorkers } from './worker';
 
-export { processDownload, identityPool } from './engine';
+import { processDownload, identityPool } from './engine';
+export { processDownload, identityPool };
 export { CobaltFallback } from './fallback';
 
 const logger = createLogger('downloader');
@@ -10,6 +11,15 @@ async function start() {
   try {
     logger.info('Starting Downloader Workers...');
     const workers = await setupWorkers(logger);
+    
+    logger.info('Syncing identity pool to Redis...');
+    await Promise.all([
+      identityPool.syncToRedis('instagram'),
+      identityPool.syncToRedis('twitter'),
+      identityPool.syncToRedis('tiktok'),
+      identityPool.syncToRedis('reddit'),
+      identityPool.syncToRedis('mock')
+    ]);
     
     // Graceful shutdown
     process.once('SIGINT', async () => {

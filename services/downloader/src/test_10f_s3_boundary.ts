@@ -21,7 +21,7 @@ async function runTests() {
 
   let s3;
   try {
-    s3 = new S3Storage(mockS3Dir);
+    s3 = new S3Storage();
     await s3.init();
 
     // Reset S3

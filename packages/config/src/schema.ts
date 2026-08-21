@@ -37,9 +37,14 @@ const configSchema = z.object({
   // Storage
   TEMP_DIR: z.string().default('/tmp/media-dl'),
   MAX_FILE_SIZE: z.coerce.number().default(50 * 1024 * 1024), // 50MB
+  ARTIFACT_BUCKET: z.string().default(process.env.S3_BUCKET || 'media-dl-prod'),
 
   // Cache
   CACHE_TTL_SECONDS: z.coerce.number().default(86400),
+  
+  // Cobalt Fallback
+  COBALT_URL: z.string().default('http://cobalt.internal:9000'),
+  COBALT_ADMISSION_LIMIT: z.coerce.number().default(10),
   
   // API
   API_PORT: z.coerce.number().default(3000),

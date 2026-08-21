@@ -1,23 +1,21 @@
 import { S3ArtifactReference } from '@media-downloader/types';
 import fs from 'fs/promises';
+import { createReadStream, createWriteStream } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-// import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 
 export class S3Storage {
-  private bucketPath: string;
-  // private s3Client: S3Client;
+  private s3Client: S3Client;
 
-  constructor(bucketPath: string = '/tmp/s3-mock-bucket') {
-    this.bucketPath = bucketPath;
-    
-    // In production AWS, the S3Client will implicitly use the ECS Task Role
-    // credentials without requiring AWS_ACCESS_KEY_ID in .env
-    // this.s3Client = new S3Client({});
+  constructor() {
+    this.s3Client = new S3Client({ region: 'ap-south-1' });
   }
 
   async init() {
-    await fs.mkdir(this.bucketPath, { recursive: true });
+    // S3 requires no local initialization
   }
 
   /**
@@ -29,17 +27,25 @@ export class S3Storage {
     localFilePath: string,
     contentType: string = 'video/mp4'
   ): Promise<S3ArtifactReference> {
-    const s3Path = path.join(this.bucketPath, bucket, objectKey);
-    await fs.mkdir(path.dirname(s3Path), { recursive: true });
-
+    
     // Read and calculate hash
     const data = await fs.readFile(localFilePath);
     const hashSum = crypto.createHash('sha256');
     hashSum.update(data);
     const contentHash = hashSum.digest('hex');
 
-    // Simulate S3 PUT
-    await fs.writeFile(s3Path, data);
+    // S3 PUT
+    const command = new PutObjectCommand({
+      Bucket: bucket,
+      Key: objectKey,
+      Body: data,
+      ContentType: contentType,
+      Metadata: {
+        'content-hash': contentHash
+      }
+    });
+
+    await this.s3Client.send(command);
 
     return {
       bucket,
@@ -54,9 +60,9 @@ export class S3Storage {
    * Checkpoint / existence check
    */
   async artifactExists(bucket: string, objectKey: string): Promise<boolean> {
-    const s3Path = path.join(this.bucketPath, bucket, objectKey);
     try {
-      await fs.stat(s3Path);
+      const command = new HeadObjectCommand({ Bucket: bucket, Key: objectKey });
+      await this.s3Client.send(command);
       return true;
     } catch {
       return false;
@@ -67,13 +73,11 @@ export class S3Storage {
    * Get artifact metadata without downloading
    */
   async getArtifactMetadata(bucket: string, objectKey: string): Promise<{ sizeBytes: number; contentHash: string }> {
-    const s3Path = path.join(this.bucketPath, bucket, objectKey);
-    const data = await fs.readFile(s3Path);
-    const hashSum = crypto.createHash('sha256');
-    hashSum.update(data);
+    const command = new HeadObjectCommand({ Bucket: bucket, Key: objectKey });
+    const response = await this.s3Client.send(command);
     return {
-      sizeBytes: data.length,
-      contentHash: hashSum.digest('hex'),
+      sizeBytes: response.ContentLength || 0,
+      contentHash: response.Metadata?.['content-hash'] || '',
     };
   }
 
@@ -84,25 +88,38 @@ export class S3Storage {
     ref: S3ArtifactReference,
     destinationPath: string
   ): Promise<void> {
-    const s3Path = path.join(this.bucketPath, ref.bucket, ref.objectKey);
-    
-    let data: Buffer;
+    let response;
     try {
-      data = await fs.readFile(s3Path);
-    } catch (e) {
+      const command = new GetObjectCommand({ Bucket: ref.bucket, Key: ref.objectKey });
+      response = await this.s3Client.send(command);
+    } catch (e: any) {
       throw new Error(`S3 Object not found: ${ref.bucket}/${ref.objectKey}`);
     }
 
-    // Verify Integrity
-    const hashSum = crypto.createHash('sha256');
-    hashSum.update(data);
-    const actualHash = hashSum.digest('hex');
-
-    if (actualHash !== ref.contentHash) {
-      throw new Error(`Integrity Error: Expected hash ${ref.contentHash}, got ${actualHash} for ${ref.objectKey}`);
+    if (!response.Body) {
+      throw new Error(`S3 Object body empty: ${ref.bucket}/${ref.objectKey}`);
     }
 
     await fs.mkdir(path.dirname(destinationPath), { recursive: true });
-    await fs.writeFile(destinationPath, data);
+
+    // Stream download and verify hash
+    const hashSum = crypto.createHash('sha256');
+    const writeStream = createWriteStream(destinationPath);
+    
+    const body = response.Body as NodeJS.ReadableStream;
+    
+    return new Promise((resolve, reject) => {
+        body.on('data', (chunk) => hashSum.update(chunk));
+        body.pipe(writeStream)
+            .on('finish', () => {
+                const actualHash = hashSum.digest('hex');
+                if (actualHash !== ref.contentHash) {
+                    reject(new Error(`Integrity Error: Expected hash ${ref.contentHash}, got ${actualHash} for ${ref.objectKey}`));
+                } else {
+                    resolve();
+                }
+            })
+            .on('error', reject);
+    });
   }
 }

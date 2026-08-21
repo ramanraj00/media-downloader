@@ -101,7 +101,7 @@ export async function setupWorker(logger: Logger) {
         // 2. Upload Processed Artifact to S3
         jobLogger.info('Uploading processed artifact to S3');
         const objectKey = `jobs/${bullJob.data.jobId}/processed/video.mp4`;
-        const processedArtifactRef = await s3.putArtifact('media-dl-prod', objectKey, result.filePath);
+        const processedArtifactRef = await s3.putArtifact(config.ARTIFACT_BUCKET, objectKey, result.filePath);
         result.s3Artifact = processedArtifactRef;
 
         await db.update(jobs)

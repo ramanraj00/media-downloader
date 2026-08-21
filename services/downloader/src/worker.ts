@@ -27,7 +27,7 @@ export async function setupWorkers(logger: Logger) {
     jobLogger.info('Received download job');
     
     const platform = bullJob.data.platform.toLowerCase() as Platform;
-    const limit = admissionLimits[platform] || 0;
+    const limit = admissionLimits[platform] ?? 10;
     
     const admissionToken = await admission.admit(platform, limit);
     if (!admissionToken) {

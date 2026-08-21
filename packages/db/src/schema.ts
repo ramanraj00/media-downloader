@@ -73,6 +73,17 @@ export const outboxEvents = pgTable('outbox_events', {
   };
 });
 
+export const failedJobs = pgTable('failed_jobs', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  originalJobId: uuid('original_job_id').notNull(),
+  queueName: varchar('queue_name', { length: 255 }).notNull(),
+  platform: varchar('platform', { length: 50 }),
+  failedReason: text('failed_reason').notNull(),
+  attemptsMade: integer('attempts_made').notNull(),
+  jobData: jsonb('job_data').notNull(),
+  failedAt: timestamp('failed_at').defaultNow().notNull(),
+});
+
 export const credentials = pgTable('credentials', {
   id: uuid('id').defaultRandom().primaryKey(),
   platform: varchar('platform', { length: 50 }).notNull(),

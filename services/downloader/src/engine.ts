@@ -4,8 +4,8 @@ import { InstagramAdapter } from './platforms/instagram';
 import { TwitterAdapter } from './platforms/twitter';
 import { TikTokAdapter } from './platforms/tiktok';
 import { RedditAdapter } from './platforms/reddit';
-import { CobaltFallback } from './fallback';
-export { CobaltFallback };
+import { CobaltAdapter } from './platforms/cobalt';
+import { MockAdapter } from './platforms/mockAdapter';
 import { config } from '@media-downloader/config';
 import fs from 'fs';
 import path from 'path';
@@ -24,21 +24,23 @@ import Redis from 'ioredis';
 
 import { PlatformAdapter } from './platforms/adapter';
 
-const adapters: Partial<Record<Platform, PlatformAdapter>> = {
+const adapters: Partial<Record<string, PlatformAdapter>> = {
   [Platform.INSTAGRAM]: new InstagramAdapter(),
   [Platform.TWITTER]: new TwitterAdapter(),
   [Platform.TIKTOK]: new TikTokAdapter(),
   [Platform.REDDIT]: new RedditAdapter(),
+  ['mock']: new MockAdapter(),
 };
 
-const fallback = new CobaltFallback();
+
 const s3 = new S3Storage(); // Default mock bucket
 
-const distributedBreakers: Partial<Record<Platform, DistributedCircuitBreaker>> = {
+const distributedBreakers: Partial<Record<string, DistributedCircuitBreaker>> = {
   [Platform.INSTAGRAM]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'instagram', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
   [Platform.TWITTER]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'twitter', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
   [Platform.TIKTOK]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'tiktok', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
   [Platform.REDDIT]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'reddit', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
+  ['mock']: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'mock', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
 };
 
 export const identityPool = new CredentialPool({ redisUrl: config.REDIS_URL });
@@ -57,7 +59,7 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
 
   // CHECKPOINT RESILIENCE: Check if S3 artifact already exists
   const objectKey = `jobs/${job.jobId}/raw/video.mp4`; // Assuming mp4 for simplicity
-  const bucket = 'media-dl-prod';
+  const bucket = config.ARTIFACT_BUCKET;
   
   if (await s3.artifactExists(bucket, objectKey)) {
     logger.info('S3 checkpoint found, skipping download and reusing artifact');
@@ -129,21 +131,26 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
         }
       }
 
-      if (!error.isRetryable || error instanceof IdentitiesExhaustedError) {
-        throw error; // Immediately bubble up permanent errors or capacity exhaustion
+
+
+      if (error instanceof IdentitiesExhaustedError) {
+        throw error; // Immediately bubble up capacity exhaustion (No Cobalt fallback)
       }
 
-      throw error; // Default: bubble up any other transient error to BullMQ
-    }
-  }
+      // If it's a permanent error, we might fallback to Cobalt
+      if (error instanceof PermanentError) {
+        logger.info({ err: error.message }, 'Primary adapter threw PermanentError. Attempting Cobalt fallback.');
+        try {
+          const cobalt = new CobaltAdapter();
+          result = await cobalt.download(job.url, outputDir);
+          break; // Fallback succeeded
+        } catch (fallbackError: any) {
+          logger.error({ err: fallbackError }, 'Cobalt fallback also failed');
+          throw new PermanentError(`Primary and Cobalt both failed permanently. Last primary error: ${error.message}`);
+        }
+      }
 
-  if (!result && lastError && lastError instanceof TransientError && !(lastError instanceof IdentitiesExhaustedError)) {
-    try {
-      logger.info({ lastError: lastError.message }, 'Primary adapter exhausted or identities blocked. Attempting Cobalt fallback.');
-      result = await fallback.download(job.url, outputDir);
-    } catch (fallbackError: any) {
-      logger.error({ err: fallbackError }, 'Cobalt fallback also failed');
-      throw new TransientError(`All primary and fallback download methods failed. Last error: ${lastError.message}`);
+      throw error; // Bubble up transient error to BullMQ (No Cobalt fallback for normal transients)
     }
   }
 

@@ -3,7 +3,7 @@ FROM node:22-slim AS builder
 WORKDIR /app
 RUN apt-get update && apt-get install -y ffmpeg python3 make g++ curl && rm -rf /var/lib/apt/lists/*
 
-COPY package.json package-lock.json turbo.json ./
+COPY package.json package-lock.json turbo.json tsconfig.base.json ./
 COPY packages ./packages
 COPY apps ./apps
 COPY services ./services

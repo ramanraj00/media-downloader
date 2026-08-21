@@ -82,6 +82,20 @@ export async function setupWorker(logger: Logger) {
             await tx.update(users)
               .set({ activeJobs: sql`${users.activeJobs} - 1` })
               .where(sql`${users.id} = ${jobRecord.userId} AND ${users.activeJobs} > 0`);
+              
+            // 4. Create outbox event for reliable notification
+            const { outboxEvents } = require('@media-downloader/db');
+            await tx.insert(outboxEvents).values({
+              eventType: 'JOB_COMPLETED',
+              aggregateId: jobRecord.id,
+              payload: { 
+                jobId: jobRecord.id, 
+                chatId: jobRecord.chatId,
+                statusMessageId: jobRecord.statusMessageId,
+                telegramFileId: jobRecord.telegramFileId,
+                telegramMessageId: jobRecord.telegramMessageId
+              }
+            });
           });
         }
 
