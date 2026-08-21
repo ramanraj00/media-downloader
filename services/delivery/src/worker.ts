@@ -57,6 +57,8 @@ export async function setupWorker(logger: Logger) {
             .where(eq(jobs.id, bullJob.data.jobId));
             
           currentStatus = JobStatus.TELEGRAM_UPLOADED;
+          jobRecord.telegramFileId = fileId;
+          jobRecord.telegramMessageId = messageId;
         }
 
         if (currentStatus === JobStatus.TELEGRAM_UPLOADED) {

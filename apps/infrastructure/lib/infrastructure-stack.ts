@@ -5,6 +5,7 @@ import * as rds from 'aws-cdk-lib/aws-rds';
 import * as elasticache from 'aws-cdk-lib/aws-elasticache';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as iam from 'aws-cdk-lib/aws-iam';
 
 export class InfrastructureStack extends cdk.Stack {
@@ -115,8 +116,11 @@ export class InfrastructureStack extends cdk.Stack {
       NODE_ENV: 'production',
       REDIS_URL: `redis://${redis.attrRedisEndpointAddress}:${redis.attrRedisEndpointPort}`,
       S3_BUCKET: artifactBucket.bucketName,
-      BOT_TOKEN: 'test_bot_token_do_not_use_in_prod', 
     };
+
+    const botTokenParam = ssm.StringParameter.fromSecureStringParameterAttributes(this, 'BotTokenParam', {
+      parameterName: '/media-downloader/bot-token',
+    });
 
     const createTask = (name: string, packageName: string, memoryLimitMiB = 512, cpu = 256) => {
       const taskDef = new ecs.FargateTaskDefinition(this, `${name}TaskDef`, {
@@ -140,6 +144,7 @@ export class InfrastructureStack extends cdk.Stack {
           secrets: {
             DB_PASSWORD: ecs.Secret.fromSecretsManager(database.secret, 'password'),
             DB_USER: ecs.Secret.fromSecretsManager(database.secret, 'username'),
+            BOT_TOKEN: ecs.Secret.fromSsmParameter(botTokenParam),
           },
           logging: ecs.LogDrivers.awsLogs({ streamPrefix: name }),
         });

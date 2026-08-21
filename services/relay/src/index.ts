@@ -73,19 +73,35 @@ export async function processPendingEvents() {
           });
           
           if (!response.ok) {
-            const errText = await response.text();
-            // If it's a 4xx error (e.g. user blocked bot), it's permanent. But for 5xx we throw to retry.
+            const rawErrText = await response.text();
+            // Security: Redact bot token from error text just in case Telegram echoes it
+            const errText = rawErrText.replace(new RegExp(botToken, 'g'), '[REDACTED_TOKEN]');
+
             if (response.status >= 500 || response.status === 429) {
+              // 5xx (Telegram server error) or 429 (rate limit) -> Transient, retry with backoff
               throw new Error(`Telegram API Error: ${response.status} ${errText}`);
+            } else if (response.status === 401 || response.status === 404) {
+              // Configuration errors -> Alert/Fail, discard event
+              logger.error({ errText, status: response.status, eventId: claimedEvent.id }, 'Configuration Error (Invalid Bot Token or Endpoint), discarding event');
+              await db.update(outboxEvents)
+                .set({ status: 'discarded', lastError: `Telegram Config Error ${response.status}: ${errText}`, updatedAt: new Date() })
+                .where(eq(outboxEvents.id, claimedEvent.id));
+              return;
             } else {
-              logger.warn({ errText, eventId: claimedEvent.id }, 'Permanent Telegram error (e.g. blocked), skipping retry');
+              // 400 (invalid request) or 403 (bot blocked) -> Permanent rejection, discard event
+              logger.warn({ errText, status: response.status, eventId: claimedEvent.id }, 'Permanent Telegram rejection (e.g. Bot Blocked), discarding event');
+              await db.update(outboxEvents)
+                .set({ status: 'discarded', lastError: `Telegram Rejection ${response.status}: ${errText}`, updatedAt: new Date() })
+                .where(eq(outboxEvents.id, claimedEvent.id));
+              return;
             }
           }
         }
       } else {
         throw new Error(`Unimplemented event type: ${claimedEvent.eventType}`);
       }
-      // 3. Mark as published in a new short update
+      
+      // 3. Mark as published in a new short update (ONLY IF 200 OK)
       await db.update(outboxEvents)
         .set({
           status: 'published',

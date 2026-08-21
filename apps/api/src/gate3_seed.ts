@@ -43,7 +43,7 @@ async function seed() {
     normalizedUrl: mockUrl,
     urlHash: crypto.createHash('sha256').update(mockUrl).digest('hex'),
     status: JobStatus.QUEUED,
-    chatId: 123456789
+    chatId: 5573292722
   });
 
   // 4. Queue job
