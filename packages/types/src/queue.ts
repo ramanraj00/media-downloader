@@ -16,17 +16,22 @@ export interface DownloadJobData {
   platform: string;
 }
 
+export interface S3ArtifactReference {
+  bucket: string;
+  objectKey: string;
+  sizeBytes: number;
+  contentType: string;
+  contentHash: string; // SHA-256 for integrity
+}
+
 export interface ProcessJobData {
   jobId: string;
-  downloadPath: string;
+  rawArtifact: S3ArtifactReference;
 }
 
 export interface UploadJobData {
   jobId: string;
-  processedPath: string;
-  mediaType: string;
-  contentHash: string;
-  fileSize: number;
+  processedArtifact: S3ArtifactReference;
 }
 
 export enum OutboxEventType {

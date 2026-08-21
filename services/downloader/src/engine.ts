@@ -17,11 +17,14 @@ import {
   IdentityBlockedError,
   IdentitiesExhaustedError,
   DistributedCircuitBreaker,
-  RedisIdentityPool
+  CredentialPool,
+  S3Storage
 } from '@media-downloader/core';
 import Redis from 'ioredis';
 
-const adapters = {
+import { PlatformAdapter } from './platforms/adapter';
+
+const adapters: Partial<Record<Platform, PlatformAdapter>> = {
   [Platform.INSTAGRAM]: new InstagramAdapter(),
   [Platform.TWITTER]: new TwitterAdapter(),
   [Platform.TIKTOK]: new TikTokAdapter(),
@@ -29,15 +32,16 @@ const adapters = {
 };
 
 const fallback = new CobaltFallback();
+const s3 = new S3Storage(); // Default mock bucket
 
-const distributedBreakers = {
+const distributedBreakers: Partial<Record<Platform, DistributedCircuitBreaker>> = {
   [Platform.INSTAGRAM]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'instagram', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
   [Platform.TWITTER]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'twitter', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
   [Platform.TIKTOK]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'tiktok', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
   [Platform.REDDIT]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'reddit', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
 };
 
-export const identityPool = new RedisIdentityPool({ redisUrl: config.REDIS_URL });
+export const identityPool = new CredentialPool({ redisUrl: config.REDIS_URL });
 const redisClient = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
 export async function processDownload(job: DownloadJobData, logger: Logger): Promise<DownloadResult> {
@@ -51,6 +55,28 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
     throw new PermanentError(`Unsupported platform: ${platform}`);
   }
 
+  // CHECKPOINT RESILIENCE: Check if S3 artifact already exists
+  const objectKey = `jobs/${job.jobId}/raw/video.mp4`; // Assuming mp4 for simplicity
+  const bucket = 'media-dl-prod';
+  
+  if (await s3.artifactExists(bucket, objectKey)) {
+    logger.info('S3 checkpoint found, skipping download and reusing artifact');
+    const metadata = await s3.getArtifactMetadata(bucket, objectKey);
+    return {
+      filePath: 'S3_CHECKPOINT',
+      info: { url: job.url, platform, ext: 'mp4' },
+      sourceLayer: 's3_checkpoint',
+      downloadTimeMs: 0,
+      s3Artifact: {
+        bucket,
+        objectKey,
+        sizeBytes: metadata.sizeBytes,
+        contentType: 'video/mp4',
+        contentHash: metadata.contentHash
+      }
+    };
+  }
+
   const adapter = adapters[platform];
   const breaker = distributedBreakers[platform];
 
@@ -59,50 +85,54 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
   }
 
   let lastError: Error | null = null;
+  let result: DownloadResult | null = null;
 
   for (let attempt = 0; attempt < config.MAX_RETRIES; attempt++) {
+    let leaseId: string | undefined;
     let identityId: string | undefined;
 
     try {
-      try {
-        identityId = await identityPool.getHealthyIdentity(platform);
-      } catch (err: any) {
-        if (err instanceof IdentitiesExhaustedError) {
-          logger.warn({ platform }, 'All identities in pool are BLOCKED or EXHAUSTED. Failing over to Cobalt layer.');
-          lastError = err;
-          break; // Break retry loop to trigger Cobalt fallback immediately
-        }
-        throw err;
+      const acq = await identityPool.acquire(platform);
+      if (!acq) {
+        throw new IdentitiesExhaustedError(`All identities in pool for platform [${platform}] are currently BLOCKED or EXHAUSTED`, platform);
       }
+      
+      identityId = acq.id;
+      leaseId = acq.leaseId;
 
       logger.info({ attempt, identityId, platform }, 'Attempting primary adapter download');
 
-      const result = await breaker.execute(() => adapter.download(job.url, outputDir, identityId));
-      return result;
+      result = await breaker.execute(() => adapter.download(job.url, outputDir, acq.encryptedData));
+      
+      // Release lease on success
+      await identityPool.release(identityId, leaseId, platform, 'SUCCESS');
+      break;
 
     } catch (error: any) {
       lastError = error;
       logger.warn({ err: error, attempt, identityId }, 'Primary adapter download attempt failed');
 
-      if (error instanceof IdentityBlockedError) {
-        // Mark identity BLOCKED in Redis and rotate to next healthy identity
-        logger.warn({ identityId: error.identityId }, `Identity ${error.identityId} blocked by anti-bot challenge. Marking BLOCKED in Redis.`);
-        await identityPool.markIdentityBlocked(platform, error.identityId, 300000);
-        continue;
-      }
+      if (identityId && leaseId) {
+        let action = error.credentialAction || 'UNKNOWN_ERROR';
+        if (action === 'BLOCK') action = '403';
+        else if (action === 'COOLDOWN') action = '429';
 
-      if (error instanceof RateLimitError) {
-        logger.info({ retryAfterMs: error.retryAfterMs }, `Rate limited on platform ${platform}. Applying adaptive backoff.`);
-        if (identityId) {
-          await identityPool.markIdentityCooldown(platform, identityId, error.retryAfterMs);
+        logger.warn({ identityId, action }, `Releasing credential with action ${action}`);
+        await identityPool.release(identityId, leaseId, platform, action);
+
+        if (error instanceof RateLimitError) {
+          const delay = calculateBackoffDelay(attempt, error.retryAfterMs);
+          await new Promise(r => setTimeout(r, Math.min(delay, 2000)));
+          continue;
         }
-        const delay = calculateBackoffDelay(attempt, error.retryAfterMs);
-        await new Promise(r => setTimeout(r, Math.min(delay, 2000))); // Non-blocking short backoff in test / worker
-        continue;
+
+        if (error instanceof IdentityBlockedError) {
+          continue; // Instantly retry with a new identity
+        }
       }
 
-      if (!error.isRetryable) {
-        break; // Stop retrying for permanent errors (e.g. 404)
+      if (!error.isRetryable || error instanceof IdentitiesExhaustedError) {
+        break; // Stop retrying for permanent errors
       }
 
       const delay = calculateBackoffDelay(attempt, config.RETRY_BASE_DELAY_MS);
@@ -110,17 +140,33 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
     }
   }
 
-  // Layer 3: Secondary Provider (Cobalt Fallback)
-  if (lastError && (lastError instanceof TransientError || lastError instanceof IdentitiesExhaustedError)) {
+  if (!result && lastError && (lastError instanceof TransientError || lastError instanceof IdentitiesExhaustedError)) {
     try {
       logger.info({ lastError: lastError.message }, 'Primary adapter exhausted or identities blocked. Attempting Cobalt fallback.');
-      const result = await fallback.download(job.url, outputDir);
-      return result;
+      result = await fallback.download(job.url, outputDir);
     } catch (fallbackError: any) {
       logger.error({ err: fallbackError }, 'Cobalt fallback also failed');
       throw new TransientError(`All primary and fallback download methods failed. Last error: ${lastError.message}`);
     }
   }
 
-  throw lastError || new PermanentError('Unknown download failure');
+  if (!result) {
+    throw lastError || new PermanentError('Unknown download failure');
+  }
+
+  // Upload to S3
+  logger.info({ filePath: result.filePath }, 'Uploading artifact to S3');
+  const artifactRef = await s3.putArtifact(bucket, objectKey, result.filePath);
+  
+  result.s3Artifact = artifactRef;
+  
+  // Cleanup local /tmp file!
+  try {
+    fs.unlinkSync(result.filePath);
+    logger.info('Cleaned up local /tmp artifact');
+  } catch (e) {
+    logger.error('Failed to cleanup local file');
+  }
+
+  return result;
 }

@@ -72,3 +72,24 @@ export const outboxEvents = pgTable('outbox_events', {
     outboxPendingIdx: index('idx_outbox_pending').on(table.status, table.availableAt),
   };
 });
+
+export const credentials = pgTable('credentials', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  platform: varchar('platform', { length: 50 }).notNull(),
+  encryptedData: text('encrypted_data').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('AVAILABLE'), 
+  leaseId: uuid('lease_id'),
+  leaseUntil: timestamp('lease_until'),
+  consecutiveFailures: integer('consecutive_failures').notNull().default(0),
+  blockCount: integer('block_count').notNull().default(0),
+  cooldownUntil: timestamp('cooldown_until'),
+  lastUsedAt: timestamp('last_used_at'),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow(),
+}, (table) => {
+  return {
+    platformIdx: index('idx_credentials_platform').on(table.platform),
+    statusIdx: index('idx_credentials_status').on(table.status),
+    leaseIdx: index('idx_credentials_lease').on(table.leaseUntil)
+  };
+});

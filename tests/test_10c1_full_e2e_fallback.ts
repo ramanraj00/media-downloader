@@ -13,12 +13,20 @@ import util from 'util';
 import { setupWorkers as setupDownloaderWorkers } from '@media-downloader/downloader/dist/worker.js';
 import { setupWorker as setupMediaProcessorWorker } from '@media-downloader/media-processor/dist/worker.js';
 import { setupWorker as setupDeliveryWorker } from '@media-downloader/delivery/dist/worker.js';
-import { processPendingEvents, setupTerminalFailureHandler } from '@media-downloader/outbox-publisher/dist/services/outbox-publisher/src/index.js';
+import { processPendingEvents, setupTerminalFailureHandler, handleTerminalFailure } from '@media-downloader/outbox-publisher/dist/services/outbox-publisher/src/index.js';
+import { Queue } from 'bullmq';
 
 import { RedisIdentityPool } from '@media-downloader/core/dist/identityPool.js';
 
 const execAsync = util.promisify(exec);
-const logger = pino({ level: 'silent' });
+// Use 'info' logger to satisfy user request for worker startup and execution logs
+const logger = pino({ 
+  level: 'info',
+  transport: {
+    target: 'pino-pretty',
+    options: { colorize: false, translateTime: 'SYS:standard' }
+  }
+});
 const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
 
 let testServer: http.Server;
@@ -35,14 +43,12 @@ function startMockServer(): Promise<void> {
       const urlPath = req.url || '';
       cobaltCallCounts[urlPath] = (cobaltCallCounts[urlPath] || 0) + 1;
 
-      // Primary platform simulation (403 Anti-Bot Block)
       if (urlPath.includes('synth_403_primary.mp4')) {
         res.writeHead(403);
         res.end('Anti-Bot Challenge');
         return;
       }
 
-      // Cobalt Fallback API: E2E Success
       if (urlPath.includes('/cobalt_api_e2e/api/json')) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -52,7 +58,6 @@ function startMockServer(): Promise<void> {
         return;
       }
 
-      // Cobalt Fallback API: E2E Permanent Failure
       if (urlPath.includes('/cobalt_api_fail/api/json')) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -62,7 +67,6 @@ function startMockServer(): Promise<void> {
         return;
       }
 
-      // Valid Media endpoint for E2E delivery pipeline
       if (urlPath === '/valid_media.mp4') {
         const filePath = `${TEST_DIR}/valid_media.mp4`;
         if (fs.existsSync(filePath)) {
@@ -127,6 +131,7 @@ async function runTest10C1() {
   await identityPool.registerIdentities('instagram', ['primary_1', 'primary_2']);
   
   // Set up all actual worker processes in-memory for E2E
+  console.log('\n[STARTING WORKERS...]');
   const dlWorkers = await setupDownloaderWorkers(logger);
   const mpWorker = await setupMediaProcessorWorker(logger);
   const delWorker = await setupDeliveryWorker(logger);
@@ -265,6 +270,39 @@ async function runTest10C1() {
     endpointCount2 > 0 &&
     failedRecord?.status === 'failed_permanently' &&
     activeUser?.activeJobs === 0;
+
+  // Verify Telegram Message Persistence for Scenario 1
+  console.log('[VERIFYING DB STATE FOR SCENARIO 1]');
+  if (completedRecord?.telegramMessageId && completedRecord?.telegramFileId) {
+    console.log(`├── telegramMessageId: ${completedRecord.telegramMessageId}`);
+    console.log(`├── telegramFileId: ${completedRecord.telegramFileId}`);
+  } else {
+    console.error('❌ Scenario 1 Failed to persist telegramMessageId/telegramFileId');
+    s1Passed = false;
+  }
+
+  // Idempotency Check for Terminal Handler
+  console.log('[VERIFYING IDEMPOTENCY FOR SCENARIO 2]');
+  console.log('├── Emitting duplicate terminal failure event to outbox-publisher...');
+  // Manually invoke the exact terminal failure handler logic for a duplicate failed event
+  const dummyQueue = new Queue('download-instagram', { connection: redis });
+  await handleTerminalFailure(failedRecord?.id || 'missing', 'Duplicate Failure Check', 'download-instagram', dummyQueue);
+  
+  // Wait a little for DB transactions to complete
+  await new Promise(r => setTimeout(r, 500));
+  
+  activeUser = await db.query.users.findFirst({ where: eq(users.telegramId, testUserId) });
+  console.log(`└── Final User activeJobs after duplicate event: ${activeUser?.activeJobs} (Expected: 0)`);
+  if (activeUser?.activeJobs !== 0) {
+    console.error('❌ Scenario 2 Idempotency Failed! activeJobs went below 0');
+    s2Passed = false;
+  }
+
+  if (s1Passed) {
+    console.log('✅ SCENARIO 1 PASSED: Pipeline naturally routed 403 -> Fallback -> Processor -> Telegram -> COMPLETED -> activeJobs: 0\n');
+  } else {
+    console.error('❌ SCENARIO 1 FAILED\n');
+  }
 
   if (s2Passed) {
     console.log('✅ SCENARIO 2 PASSED: Pipeline naturally routed 403 -> Fallback 404 -> Terminal Handler -> activeJobs: 0\n');

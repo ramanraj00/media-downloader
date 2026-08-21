@@ -7,7 +7,11 @@ import { QUEUES, UploadJobData, JobStatus } from '@media-downloader/types';
 import { db, jobs, users, media } from '@media-downloader/db';
 import { eq, sql } from 'drizzle-orm';
 import { uploadToTelegram } from './uploader';
+import { S3Storage } from '@media-downloader/core';
 import fs from 'fs';
+import path from 'path';
+
+const s3 = new S3Storage();
 
 export async function setupWorker(logger: Logger) {
   const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -18,6 +22,8 @@ export async function setupWorker(logger: Logger) {
       const jobLogger = withJobContext(logger, bullJob.data.jobId, 'upload');
       jobLogger.info('Received upload job');
       
+      const localPath = path.join(config.TEMP_DIR, `job_${bullJob.data.jobId}_delivery.mp4`);
+
       try {
         const jobRecord = await db.query.jobs.findFirst({
           where: eq(jobs.id, bullJob.data.jobId)
@@ -33,8 +39,12 @@ export async function setupWorker(logger: Logger) {
         }
 
         if (currentStatus === JobStatus.UPLOADING || currentStatus === JobStatus.VALIDATING) {
+          // Download artifact from S3
+          jobLogger.info('Downloading processed artifact from S3 for delivery');
+          await s3.getArtifact(bullJob.data.processedArtifact, localPath);
+
           // Upload to Telegram
-          const { fileId, messageId } = await uploadToTelegram(bullJob.data, jobRecord, jobLogger);
+          const { fileId, messageId } = await uploadToTelegram(bullJob.data, localPath, jobRecord, jobLogger);
           
           // Immediately persist durable identifiers and update state
           await db.update(jobs)
@@ -42,8 +52,6 @@ export async function setupWorker(logger: Logger) {
               status: JobStatus.TELEGRAM_UPLOADED,
               telegramFileId: fileId,
               telegramMessageId: messageId,
-              contentHash: bullJob.data.contentHash,
-              fileSize: bullJob.data.fileSize,
               updatedAt: new Date() 
             })
             .where(eq(jobs.id, bullJob.data.jobId));
@@ -52,29 +60,13 @@ export async function setupWorker(logger: Logger) {
         }
 
         if (currentStatus === JobStatus.TELEGRAM_UPLOADED) {
-          // Read durable metadata from PostgreSQL
-          let finalContentHash = jobRecord.contentHash || bullJob.data.contentHash;
-          let finalFileSize = jobRecord.fileSize ?? bullJob.data.fileSize;
-          
-          if (!finalContentHash || finalFileSize === null || finalFileSize === undefined) {
-             const updatedJob = await db.query.jobs.findFirst({
-               where: eq(jobs.id, jobRecord.id)
-             });
-             finalContentHash = updatedJob?.contentHash ?? bullJob.data.contentHash ?? null;
-             finalFileSize = updatedJob?.fileSize ?? bullJob.data.fileSize ?? null;
-          }
-          
-          if (!finalContentHash || finalFileSize === null || finalFileSize === undefined) {
-             throw new Error('Durable metadata missing from database for finalization');
-          }
-          
           // Atomic finalization transaction
           await db.transaction(async (tx) => {
             // 1. Insert media idempotently
             await tx.insert(media).values({
               jobId: jobRecord.id,
-              contentHash: finalContentHash!,
-              fileSize: finalFileSize!,
+              contentHash: bullJob.data.processedArtifact.contentHash,
+              fileSize: bullJob.data.processedArtifact.sizeBytes,
             }).onConflictDoNothing({ target: media.jobId });
             
             // 2. Mark completed
@@ -95,7 +87,7 @@ export async function setupWorker(logger: Logger) {
 
         // Cleanup temp file
         try {
-          fs.unlinkSync(bullJob.data.processedPath);
+          fs.unlinkSync(localPath);
         } catch (e) {
           jobLogger.warn({ err: e }, 'Failed to cleanup temp file');
         }

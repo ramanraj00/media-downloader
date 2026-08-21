@@ -3,6 +3,7 @@ export enum Platform {
   TWITTER = 'twitter',
   TIKTOK = 'tiktok',
   REDDIT = 'reddit',
+  YOUTUBE = 'youtube',
   UNKNOWN = 'unknown',
 }
 

@@ -42,7 +42,7 @@ export async function setupWorkers(logger: Logger) {
       // 4. Enqueue to media:process
       const processData: ProcessJobData = {
         jobId: bullJob.data.jobId,
-        downloadPath: result.filePath,
+        rawArtifact: result.s3Artifact!,
       };
       
       await processQueue.add('process', processData, {

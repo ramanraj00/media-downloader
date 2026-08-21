@@ -1,4 +1,5 @@
 import { Platform } from './platform';
+import { S3ArtifactReference } from './queue';
 
 export interface MediaInfo {
   url: string;
@@ -17,10 +18,11 @@ export interface MediaInfo {
 }
 
 export interface DownloadResult {
-  filePath: string;
+  filePath: string; // Will eventually be deprecated or point to S3 URI
   info: MediaInfo;
   sourceLayer: string; // 'anonymous', 'cookies', 'api_fallback'
   downloadTimeMs: number;
+  s3Artifact?: S3ArtifactReference;
 }
 
 export interface ProcessedMedia {
@@ -32,6 +34,7 @@ export interface ProcessedMedia {
   hasAudio: boolean;
   fileSize: number;
   wasConverted: boolean;
+  s3Artifact?: S3ArtifactReference;
 }
 
 export interface ProbeStream {

@@ -7,8 +7,12 @@ import { QUEUES, ProcessJobData, JobStatus, UploadJobData } from '@media-downloa
 import { users, jobs, db } from '@media-downloader/db';
 import { eq, sql } from 'drizzle-orm';
 import { normalizeVideo } from './ffmpeg';
-import { calculateFileHash } from '@media-downloader/core';
+import { calculateFileHash, S3Storage } from '@media-downloader/core';
 import { runProbe, determineMediaType } from './probe';
+import fs from 'fs/promises';
+import path from 'path';
+
+const s3 = new S3Storage();
 
 export async function setupWorker(logger: Logger) {
   const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -20,6 +24,8 @@ export async function setupWorker(logger: Logger) {
       const jobLogger = withJobContext(logger, bullJob.data.jobId, 'process');
       jobLogger.info('Received process job');
       
+      const inputPath = path.join(config.TEMP_DIR, `job_${bullJob.data.jobId}_raw.mp4`);
+
       try {
         const jobRecord = await db.query.jobs.findFirst({
           where: eq(jobs.id, bullJob.data.jobId)
@@ -34,8 +40,12 @@ export async function setupWorker(logger: Logger) {
           .set({ status: JobStatus.PROCESSING_MEDIA, updatedAt: new Date() })
           .where(eq(jobs.id, bullJob.data.jobId));
         
+        // 1. Download artifact from S3 (includes integrity check)
+        jobLogger.info('Downloading artifact from S3');
+        await s3.getArtifact(bullJob.data.rawArtifact, inputPath);
+
         // Pre-flight probe
-        const preFlightProbe = await runProbe(bullJob.data.downloadPath);
+        const preFlightProbe = await runProbe(inputPath);
         const mediaType = determineMediaType(preFlightProbe);
         
         if (mediaType === 'document') {
@@ -43,7 +53,7 @@ export async function setupWorker(logger: Logger) {
         }
 
         // Process media
-        const result = await normalizeVideo(bullJob.data.downloadPath, preFlightProbe, mediaType, jobLogger);
+        const result = await normalizeVideo(inputPath, preFlightProbe, mediaType, jobLogger);
         
         // Update status to VALIDATING
         await db.update(jobs)
@@ -88,6 +98,12 @@ export async function setupWorker(logger: Logger) {
         // Calculate file hash for finalization
         const contentHash = await calculateFileHash(result.filePath);
         
+        // 2. Upload Processed Artifact to S3
+        jobLogger.info('Uploading processed artifact to S3');
+        const objectKey = `jobs/${bullJob.data.jobId}/processed/video.mp4`;
+        const processedArtifactRef = await s3.putArtifact('media-dl-prod', objectKey, result.filePath);
+        result.s3Artifact = processedArtifactRef;
+
         await db.update(jobs)
           .set({
             status: JobStatus.UPLOADING,
@@ -100,10 +116,7 @@ export async function setupWorker(logger: Logger) {
         // Enqueue to telegram:upload
         const uploadData: UploadJobData = {
           jobId: bullJob.data.jobId,
-          processedPath: result.filePath,
-          mediaType: result.mediaType,
-          contentHash,
-          fileSize: result.fileSize
+          processedArtifact: processedArtifactRef,
         };
         
         await uploadQueue.add('upload', uploadData, {
@@ -112,6 +125,15 @@ export async function setupWorker(logger: Logger) {
         });
         
         jobLogger.info('Media processing & validation completed and queued for upload');
+
+        // Cleanup local ephemeral disk
+        try {
+          await fs.unlink(inputPath);
+          await fs.unlink(result.filePath);
+        } catch (e) {
+          // ignore
+        }
+
         return result;
       } catch (error: any) {
         jobLogger.error({ err: error }, 'Process job failed');

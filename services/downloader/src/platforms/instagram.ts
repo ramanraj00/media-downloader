@@ -1,6 +1,6 @@
 import { PlatformAdapter } from './adapter';
 import { Platform, DownloadResult } from '@media-downloader/types';
-import { TransientError, RateLimitError, PermanentError, classifyPlatformError } from '@media-downloader/core';
+import { TransientError, RateLimitError, PermanentError, classifyPlatformError, buildAppError } from '@media-downloader/core';
 import { execFile } from 'child_process';
 import util from 'util';
 import path from 'path';
@@ -23,7 +23,8 @@ export class InstagramAdapter extends PlatformAdapter {
       
       const res = await fetch(url);
       if (!res.ok) {
-        throw classifyPlatformError(`HTTP ${res.status}`, this.platform, identityId);
+        const result = classifyPlatformError(`HTTP ${res.status}`, this.platform, identityId);
+        throw buildAppError(result, this.platform, identityId);
       }
       const buffer = Buffer.from(await res.arrayBuffer());
       fs.writeFileSync(targetPath, buffer);
@@ -86,7 +87,8 @@ export class InstagramAdapter extends PlatformAdapter {
         downloadTimeMs: Date.now() - startTime,
       };
     } catch (error: any) {
-      throw classifyPlatformError(error.stderr || error.message, this.platform, identityId);
+      const result = classifyPlatformError(error.stderr || error.message, this.platform, identityId);
+      throw buildAppError(result, this.platform, identityId);
     }
   }
   

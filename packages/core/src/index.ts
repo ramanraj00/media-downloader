@@ -5,5 +5,8 @@ export * from './circuitBreaker';
 export * from './distributedCircuitBreaker';
 export * from './identityPool';
 export * from './classifiers';
+export * from './classifiers/types';
 export * from './retry';
 export * from './hash';
+export * from './credentialPool';
+export * from './s3';

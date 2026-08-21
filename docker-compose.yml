@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: dev
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: mediadl
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  bot:
+    build: .
+    command: node apps/bot/dist/index.js
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://dev:dev@postgres:5432/mediadl
+      - REDIS_URL=redis://redis:6379
+      - BOT_TOKEN=${BOT_TOKEN}
+    depends_on:
+      - postgres
+      - redis
+
+  downloader:
+    build: .
+    command: node services/downloader/dist/index.js
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://dev:dev@postgres:5432/mediadl
+      - REDIS_URL=redis://redis:6379
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${S3_BUCKET}
+    depends_on:
+      - postgres
+      - redis
+
+  processor:
+    build: .
+    command: node services/media-processor/dist/index.js
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://dev:dev@postgres:5432/mediadl
+      - REDIS_URL=redis://redis:6379
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${S3_BUCKET}
+    depends_on:
+      - postgres
+      - redis
+
+  delivery:
+    build: .
+    command: node services/delivery/dist/index.js
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://dev:dev@postgres:5432/mediadl
+      - REDIS_URL=redis://redis:6379
+      - BOT_TOKEN=${BOT_TOKEN}
+      - AWS_REGION=${AWS_REGION}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${S3_BUCKET}
+    depends_on:
+      - postgres
+      - redis
