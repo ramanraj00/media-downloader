@@ -89,19 +89,27 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
   for (let attempt = 0; attempt < config.MAX_RETRIES; attempt++) {
     let leaseId: string | undefined;
     let identityId: string | undefined;
+    let encryptedData: string | undefined;
 
     try {
+      // For platforms that don't STRICTLY require credentials upfront, we make it optional
+      const requiresIdentity = platform === Platform.INSTAGRAM || platform === Platform.TWITTER;
+      
       const acq = await identityPool.acquire(platform);
-      if (!acq) {
+      
+      if (!acq && requiresIdentity) {
         throw new IdentitiesExhaustedError(`All identities in pool for platform [${platform}] are currently BLOCKED or EXHAUSTED`, platform);
       }
       
-      identityId = acq.id;
-      leaseId = acq.leaseId;
+      if (acq) {
+        identityId = acq.id;
+        leaseId = acq.leaseId;
+        encryptedData = acq.encryptedData;
+      }
 
       logger.info({ attempt, identityId, platform }, 'Attempting primary adapter download');
 
-      const extResult = await breaker.execute(() => adapter.extract(job.url, outputDir, acq.encryptedData));
+      const extResult = await breaker.execute(() => adapter.extract(job.url, outputDir, encryptedData));
       
       if (extResult.status !== 'success' || !extResult.filePath) {
          throw new PermanentError(`Extraction failed or no filePath: ${extResult.status}`);
@@ -115,7 +123,9 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
       };
       
       // Release lease on success
-      await identityPool.release(identityId, leaseId, platform, 'SUCCESS');
+      if (identityId && leaseId) {
+        await identityPool.release(identityId, leaseId, platform, 'SUCCESS');
+      }
       break;
 
     } catch (error: any) {

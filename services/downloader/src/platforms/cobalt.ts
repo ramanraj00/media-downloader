@@ -38,26 +38,33 @@ export class CobaltAdapter extends PlatformAdapter {
         },
         body: JSON.stringify({
           url: urlStr,
-          vQuality: '1080',
-          filenamePattern: 'classic'
+          videoQuality: '1080'
         })
       });
 
       if (response.status === 429) {
         throw new TransientError('Cobalt Rate Limited');
       }
+
+      const responseText = await response.text();
+      let data;
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        if (!response.ok) {
+           throw new PermanentError(`Cobalt returned ${response.status}: ${responseText}`);
+        }
+      }
       
       if (!response.ok) {
-        throw new PermanentError(`Cobalt returned ${response.status}`);
+        throw new PermanentError(`Cobalt returned ${response.status}: ${data?.text || responseText}`);
       }
 
-      const data = await response.json();
-      
-      if (data.status === 'error') {
+      if (data?.status === 'error') {
         throw new PermanentError(`Cobalt error: ${data.text}`);
       }
 
-      const streamUrl = data.url;
+      const streamUrl = data?.url;
       if (!streamUrl) {
         throw new PermanentError('Cobalt returned success but no URL');
       }

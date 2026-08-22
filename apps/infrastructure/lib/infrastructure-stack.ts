@@ -7,6 +7,7 @@ import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as aws_ecr_assets from 'aws-cdk-lib/aws-ecr-assets';
 
 export class InfrastructureStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -125,6 +126,7 @@ export class InfrastructureStack extends cdk.Stack {
       NODE_ENV: 'production',
       REDIS_URL: `redis://${redis.attrRedisEndpointAddress}:${redis.attrRedisEndpointPort}`,
       S3_BUCKET: artifactBucket.bucketName,
+      COBALT_URL: 'http://cobalt.media.internal:9000',
     };
 
     const botTokenParam = ssm.StringParameter.fromSecureStringParameterAttributes(this, 'BotTokenParam', {
@@ -151,6 +153,7 @@ export class InfrastructureStack extends cdk.Stack {
         taskDef.addContainer(`${name}Container`, {
           image: ecs.ContainerImage.fromAsset('../../', {
             exclude: ['**/cdk.out', '**/node_modules', '.git'],
+            platform: aws_ecr_assets.Platform.LINUX_ARM64,
           }),
           command: ['sh', '-c', `export DATABASE_URL="postgresql://"$DB_USER":"$DB_PASSWORD"@${database.instanceEndpoint.socketAddress}/postgres?sslmode=require" && npm run start -w ${packageName}`],
           environment,

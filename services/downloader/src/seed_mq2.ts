@@ -1,34 +1,36 @@
-import { config } from '@media-downloader/config';
-import Redis from 'ioredis';
 import { Queue } from 'bullmq';
-import { QUEUES, Platform, JobStatus, DownloadJobData } from '@media-downloader/types';
+import { QUEUES } from '@media-downloader/types';
 import fs from 'fs';
-
-const redis = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
-const qReddit = new Queue(QUEUES.DOWNLOAD.REDDIT, { connection: redis });
-const qTiktok = new Queue(QUEUES.DOWNLOAD.TIKTOK, { connection: redis });
 
 async function run() {
   const jobs = JSON.parse(fs.readFileSync('/tmp/jobs.json', 'utf8'));
+  console.log(`Read ${jobs.length} jobs from /tmp/jobs.json`);
 
-  for (const job of jobs) {
-    const jobData: DownloadJobData = {
-      jobId: job.id,
-      url: job.url,
-      platform: job.platform,
-      userId: job.userId,
-      telegramChatId: 12345,
-      statusMessageId: 111,
-    };
-    if (job.platform === 'REDDIT') {
-      await qReddit.add('download', jobData, { jobId: jobData.jobId });
-    } else {
-      await qTiktok.add('download', jobData, { jobId: jobData.jobId });
+  const queue = new Queue(QUEUES.PROCESS, {
+    connection: {
+      url: process.env.REDIS_URL,
+      maxRetriesPerRequest: null
     }
+  });
+  
+  for (const job of jobs) {
+    await queue.add(
+      'download',
+      {
+        jobId: job.id,
+        platform: job.platform,
+        url: job.url
+      },
+      {
+        jobId: job.id,
+        removeOnComplete: true
+      }
+    );
+    console.log(`Enqueued ${job.platform} job ${job.id}`);
   }
   
-  console.log('Seeded jobs to BullMQ directly with matching DB UUIDs!');
-  process.exit(0);
+  await queue.close();
+  console.log('Done enqueuing');
 }
 
 run().catch(console.error);
