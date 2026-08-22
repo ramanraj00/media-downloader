@@ -156,7 +156,7 @@ export class RedditAdapter extends PlatformAdapter {
 
   private resolveFile(outputDir: string): string {
     const files = fs.readdirSync(outputDir);
-    const downloaded = files.find(f => !f.endsWith('.part') && !f.endsWith('.ytdl') && !f.endsWith('.json'));
+    const downloaded = files.find(f => !f.endsWith('.part') && !f.endsWith('.ytdl') && !f.endsWith('.json') && !f.endsWith('.txt'));
 
     if (downloaded) return path.join(outputDir, downloaded);
     throw new PermanentError(`File not found in output directory ${outputDir}`);
