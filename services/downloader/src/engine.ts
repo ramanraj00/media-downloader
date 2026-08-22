@@ -1,7 +1,7 @@
 import { Logger } from 'pino';
 import { DownloadJobData, DownloadResult, Platform } from '@media-downloader/types';
-import { InstagramAdapter } from './platforms/instagram';
-import { TwitterAdapter } from './platforms/twitter';
+import { InstagramAdapter, INSTAGRAM_CAPABILITIES } from './platforms/instagram';
+import { TwitterAdapter, TWITTER_CAPABILITIES } from './platforms/twitter';
 import { TikTokAdapter, TIKTOK_CAPABILITIES } from './platforms/tiktok';
 import { RedditAdapter, REDDIT_CAPABILITIES } from './platforms/reddit';
 import { CobaltAdapter } from './platforms/cobalt';
@@ -48,8 +48,8 @@ const platformCapabilities: Partial<Record<string, {
 }>> = {
   [Platform.TIKTOK]: TIKTOK_CAPABILITIES,
   [Platform.REDDIT]: REDDIT_CAPABILITIES,
-  [Platform.INSTAGRAM]: { supportsAuthenticatedExtraction: true, supportsEgressFallback: false },
-  [Platform.TWITTER]: { supportsAuthenticatedExtraction: true, supportsEgressFallback: false },
+  [Platform.INSTAGRAM]: INSTAGRAM_CAPABILITIES,
+  [Platform.TWITTER]: TWITTER_CAPABILITIES,
 };
 
 // ─── Retry Budgets ───────────────────────────────────────────────────────────
@@ -219,7 +219,7 @@ async function executeDirect(
   logger: Logger
 ): Promise<DownloadResult> {
   // For platforms that strictly require credentials upfront
-  const requiresIdentity = platform === Platform.INSTAGRAM || platform === Platform.TWITTER;
+  const requiresIdentity = false; // Cobalt might work without credentials, let it try and throw AuthRequiredError if needed
   
   const acq = await identityPool.acquire(platform);
   
