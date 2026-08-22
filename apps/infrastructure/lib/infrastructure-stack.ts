@@ -105,10 +105,19 @@ export class InfrastructureStack extends cdk.Stack {
     // Strictly scoped S3 permissions (no static keys)
     artifactBucket.grantReadWrite(taskRole);
 
+    // ECS Exec requires SSM permissions on the task role
+    taskRole.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore')
+    );
+
     // 6. ECS Cluster with Fargate Spot
     const cluster = new ecs.Cluster(this, 'MediaCluster', {
       vpc,
       enableFargateCapacityProviders: true,
+      defaultCloudMapNamespace: {
+        name: 'media.internal',
+        type: cdk.aws_servicediscovery.NamespaceType.DNS_PRIVATE,
+      },
     });
 
     // 7. Base Task Definition
@@ -122,7 +131,11 @@ export class InfrastructureStack extends cdk.Stack {
       parameterName: '/media-downloader/bot-token',
     });
 
-    const createTask = (name: string, packageName: string, memoryLimitMiB = 512, cpu = 256) => {
+    const cobaltTokenParam = ssm.StringParameter.fromSecureStringParameterAttributes(this, 'CobaltTokenParam', {
+      parameterName: '/media-downloader/cobalt-token',
+    });
+
+    const createTask = (name: string, packageName: string, memoryLimitMiB = 512, cpu = 256, opts?: { enableExec?: boolean }) => {
       const taskDef = new ecs.FargateTaskDefinition(this, `${name}TaskDef`, {
         memoryLimitMiB,
         cpu,
@@ -145,6 +158,7 @@ export class InfrastructureStack extends cdk.Stack {
             DB_PASSWORD: ecs.Secret.fromSecretsManager(database.secret, 'password'),
             DB_USER: ecs.Secret.fromSecretsManager(database.secret, 'username'),
             BOT_TOKEN: ecs.Secret.fromSsmParameter(botTokenParam),
+            COBALT_API_KEY: ecs.Secret.fromSsmParameter(cobaltTokenParam),
           },
           logging: ecs.LogDrivers.awsLogs({ streamPrefix: name }),
         });
@@ -154,6 +168,7 @@ export class InfrastructureStack extends cdk.Stack {
         cluster,
         taskDefinition: taskDef,
         securityGroups: [ecsSecurityGroup],
+        enableExecuteCommand: opts?.enableExec ?? false,
         capacityProviderStrategies: [
           {
             capacityProvider: 'FARGATE_SPOT',
@@ -164,9 +179,50 @@ export class InfrastructureStack extends cdk.Stack {
     };
 
     // Services
-    createTask('Downloader', '@media-downloader/downloader');
+    createTask('Downloader', '@media-downloader/downloader', 512, 256, { enableExec: true });
     createTask('Processor', '@media-downloader/media-processor');
     createTask('Delivery', '@media-downloader/delivery');
     createTask('Relay', '@media-downloader/outbox-publisher');
+
+    // 8. Cobalt Internal API Service
+    const cobaltSecurityGroup = new ec2.SecurityGroup(this, 'CobaltSecurityGroup', { vpc });
+    cobaltSecurityGroup.addIngressRule(ecsSecurityGroup, ec2.Port.tcp(9000), 'Allow internal Downloader to access Cobalt API');
+
+    const cobaltTaskDef = new ecs.FargateTaskDefinition(this, 'CobaltTaskDef', {
+      memoryLimitMiB: 1024,
+      cpu: 512,
+      taskRole,
+      executionRole: taskExecutionRole,
+    });
+
+    cobaltTaskDef.addContainer('CobaltContainer', {
+      image: ecs.ContainerImage.fromRegistry('ghcr.io/imputnet/cobalt:11.7.1-a636575'),
+      portMappings: [{ containerPort: 9000 }],
+      command: ['sh', '-c', 'node -e "require(\'fs\').writeFileSync(\'/tmp/keys.json\', JSON.stringify({ [process.env.COBALT_API_KEY]: { limit: \'unlimited\' } }))" && exec node src/cobalt'],
+      environment: {
+        API_URL: 'http://cobalt.media.internal:9000/',
+        API_AUTH_REQUIRED: '1',
+        API_KEY_URL: 'file:///tmp/keys.json',
+      },
+      secrets: {
+        COBALT_API_KEY: ecs.Secret.fromSsmParameter(cobaltTokenParam),
+      },
+      logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'Cobalt' }),
+    });
+
+    new ecs.FargateService(this, 'CobaltService', {
+      cluster,
+      taskDefinition: cobaltTaskDef,
+      securityGroups: [cobaltSecurityGroup],
+      cloudMapOptions: {
+        name: 'cobalt',
+      },
+      capacityProviderStrategies: [
+        {
+          capacityProvider: 'FARGATE_SPOT',
+          weight: 1,
+        }
+      ],
+    });
   }
 }

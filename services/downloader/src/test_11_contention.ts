@@ -12,15 +12,15 @@ import { InstagramAdapter } from './platforms/instagram';
 import fs from 'fs';
 
 // Mock Instagram Download to avoid real network calls
-InstagramAdapter.prototype.download = async (url: string, outputDir: string, creds: string) => {
+InstagramAdapter.prototype.extract = async (url: string, outputDir: string, creds: string) => {
   await new Promise(r => setTimeout(r, 100)); // mock 100ms processing
   const fakeFile = `${outputDir}/test.mp4`;
   fs.writeFileSync(fakeFile, 'dummy data');
   return { 
+    status: 'success' as const,
+    source: 'ytdlp' as const,
     filePath: fakeFile, 
-    info: { url, platform: Platform.INSTAGRAM as any, ext: 'mp4' }, 
-    sourceLayer: 'adapter', 
-    downloadTimeMs: 100 
+    metadata: { url, platform: Platform.INSTAGRAM as any, ext: 'mp4', downloadTimeMs: 100 }
   };
 };
 

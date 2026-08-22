@@ -16,7 +16,7 @@ export class TwitterAdapter extends PlatformAdapter {
     return domains.some(d => url.includes(d));
   }
 
-  async download(url: string, outputDir: string, identityId?: string): Promise<DownloadResult> {
+  async extract(url: string, outputDir: string, identityId?: string): Promise<import("@media-downloader/types").ExtractionResult> {
     const opts = this.getBaseYtDlpOpts(outputDir);
     
     const command = `yt-dlp ${opts.join(' ')} --dump-json "${url}"`;
@@ -29,8 +29,10 @@ export class TwitterAdapter extends PlatformAdapter {
       const actualPath = this.resolveFile(outputDir, info.id, info.ext);
       
       return {
+        status: 'success',
+        source: 'ytdlp',
         filePath: actualPath,
-        info: {
+        metadata: {
           url,
           platform: this.platform,
           title: info.title,
@@ -44,9 +46,7 @@ export class TwitterAdapter extends PlatformAdapter {
           hasVideo: info.vcodec !== 'none',
           vcodec: info.vcodec,
           acodec: info.acodec,
-        },
-        sourceLayer: 'anonymous',
-        downloadTimeMs: Date.now() - startTime,
+        }
       };
     } catch (error: any) {
       this.handleYtDlpError(error.stderr || error.message);

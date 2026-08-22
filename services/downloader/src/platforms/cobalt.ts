@@ -1,27 +1,25 @@
-import { PlatformAdapter, Platform } from '@media-downloader/types';
+import { Platform } from '@media-downloader/types';
+import { PlatformAdapter } from './adapter';
 import { TransientError, PermanentError, AdmissionController } from '@media-downloader/core';
 import { config } from '@media-downloader/config';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
-export class CobaltAdapter implements PlatformAdapter {
+export class CobaltAdapter extends PlatformAdapter {
   platform = Platform.UNKNOWN;
   private admission: AdmissionController;
 
   constructor() {
+    super();
     this.admission = new AdmissionController(config.REDIS_URL);
   }
 
-  canHandle(url: URL): boolean {
+  canHandle(url: string): boolean {
     return true; // Cobalt is the generic fallback
   }
 
-  async extract(url: URL): Promise<any> {
-    return { url: url.toString(), platform: this.platform, ext: 'mp4' };
-  }
-
-  async download(urlStr: string, outputDir: string, _creds?: string): Promise<any> {
+  async extract(urlStr: string, outputDir: string, _creds?: string): Promise<import("@media-downloader/types").ExtractionResult> {
     const startTime = Date.now();
     const token = await this.admission.admit('cobalt', config.COBALT_ADMISSION_LIMIT, 300000);
     
@@ -31,11 +29,12 @@ export class CobaltAdapter implements PlatformAdapter {
 
     try {
       // 1. Call Cobalt API
-      const response = await fetch(`${config.COBALT_URL}/api/json`, {
+      const response = await fetch(`${config.COBALT_URL}/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Accept': 'application/json'
+          'Accept': 'application/json',
+          ...(config.COBALT_API_KEY ? { 'Authorization': `Api-Key ${config.COBALT_API_KEY}` } : {})
         },
         body: JSON.stringify({
           url: urlStr,
@@ -82,10 +81,10 @@ export class CobaltAdapter implements PlatformAdapter {
       }
 
       return {
+        status: 'success',
+        source: 'cobalt',
         filePath,
-        info: { url: urlStr, platform: this.platform, ext: 'mp4' },
-        sourceLayer: 'cobalt-fallback',
-        downloadTimeMs: Date.now() - startTime
+        metadata: { url: urlStr, platform: this.platform, ext: 'mp4', downloadTimeMs: Date.now() - startTime }
       };
     } catch (err: any) {
       if (err instanceof TransientError || err instanceof PermanentError) {

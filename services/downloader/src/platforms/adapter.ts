@@ -1,11 +1,11 @@
-import { Platform, DownloadResult } from '@media-downloader/types';
+import { Platform, ExtractionResult } from '@media-downloader/types';
 
 export abstract class PlatformAdapter {
   abstract platform: Platform;
   
   abstract canHandle(url: string): boolean;
   
-  abstract download(url: string, outputDir: string, identityId?: string): Promise<DownloadResult>;
+  abstract extract(url: string, outputDir: string, identityId?: string): Promise<ExtractionResult>;
 
   protected getBaseYtDlpOpts(outputDir: string): string[] {
     return [

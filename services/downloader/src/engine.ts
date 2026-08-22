@@ -101,7 +101,18 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
 
       logger.info({ attempt, identityId, platform }, 'Attempting primary adapter download');
 
-      result = await breaker.execute(() => adapter.download(job.url, outputDir, acq.encryptedData));
+      const extResult = await breaker.execute(() => adapter.extract(job.url, outputDir, acq.encryptedData));
+      
+      if (extResult.status !== 'success' || !extResult.filePath) {
+         throw new PermanentError(`Extraction failed or no filePath: ${extResult.status}`);
+      }
+
+      result = {
+        filePath: extResult.filePath,
+        info: extResult.metadata as any,
+        sourceLayer: extResult.source,
+        downloadTimeMs: extResult.metadata?.downloadTimeMs || 0
+      };
       
       // Release lease on success
       await identityPool.release(identityId, leaseId, platform, 'SUCCESS');
@@ -139,7 +150,16 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
         logger.info({ err: error.message }, 'Primary adapter threw PermanentError. Attempting Cobalt fallback.');
         try {
           const cobalt = new CobaltAdapter();
-          result = await cobalt.download(job.url, outputDir);
+          const extResult = await cobalt.extract(job.url, outputDir);
+          if (extResult.status !== 'success' || !extResult.filePath) {
+             throw new PermanentError(`Cobalt extraction failed: ${extResult.status}`);
+          }
+          result = {
+            filePath: extResult.filePath,
+            info: extResult.metadata as any,
+            sourceLayer: extResult.source,
+            downloadTimeMs: extResult.metadata?.downloadTimeMs || 0
+          };
           break; // Fallback succeeded
         } catch (fallbackError: any) {
           logger.error({ err: fallbackError }, 'Cobalt fallback also failed');

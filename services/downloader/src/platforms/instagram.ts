@@ -15,7 +15,7 @@ export class InstagramAdapter extends PlatformAdapter {
     return url.includes('instagram.com') || url.includes('instagr.am');
   }
 
-  async download(url: string, outputDir: string, identityId?: string): Promise<DownloadResult> {
+  async extract(url: string, outputDir: string, identityId?: string): Promise<import("@media-downloader/types").ExtractionResult> {
     if (url.includes('127.0.0.1') || url.includes('localhost')) {
       const startTime = Date.now();
       const filename = path.basename(url);
@@ -30,8 +30,10 @@ export class InstagramAdapter extends PlatformAdapter {
       fs.writeFileSync(targetPath, buffer);
       
       return {
+        status: 'success',
+        source: 'ytdlp',
         filePath: targetPath,
-        info: {
+        metadata: {
           url,
           platform: this.platform,
           title: filename,
@@ -40,9 +42,7 @@ export class InstagramAdapter extends PlatformAdapter {
           ext: filename.split('.').pop() || 'mp4',
           hasAudio: true,
           hasVideo: true,
-        },
-        sourceLayer: identityId || 'test_harness',
-        downloadTimeMs: Date.now() - startTime,
+        }
       };
     }
 
@@ -67,8 +67,10 @@ export class InstagramAdapter extends PlatformAdapter {
       const actualPath = this.resolveFile(outputDir, info.id, info.ext);
       
       return {
+        status: 'success',
+        source: 'ytdlp',
         filePath: actualPath,
-        info: {
+        metadata: {
           url,
           platform: this.platform,
           title: info.title,
@@ -82,9 +84,7 @@ export class InstagramAdapter extends PlatformAdapter {
           hasVideo: info.vcodec !== 'none',
           vcodec: info.vcodec,
           acodec: info.acodec,
-        },
-        sourceLayer: identityId || (fs.existsSync(cookiePath) ? 'cookies' : 'anonymous'),
-        downloadTimeMs: Date.now() - startTime,
+        }
       };
     } catch (error: any) {
       const result = classifyPlatformError(error.stderr || error.message, this.platform, identityId);

@@ -45,6 +45,7 @@ const configSchema = z.object({
   // Cobalt Fallback
   COBALT_URL: z.string().default('http://cobalt.internal:9000'),
   COBALT_ADMISSION_LIMIT: z.coerce.number().default(10),
+  COBALT_API_KEY: z.string().default(''),
   
   // API
   API_PORT: z.coerce.number().default(3000),
