@@ -19,7 +19,8 @@ export async function setupWorkers(logger: Logger) {
     [Platform.TWITTER]: config.ADMISSION_LIMIT_TWITTER,
     [Platform.TIKTOK]: config.ADMISSION_LIMIT_TIKTOK,
     [Platform.REDDIT]: config.ADMISSION_LIMIT_REDDIT,
-    [Platform.UNKNOWN]: 0
+    [Platform.UNKNOWN]: 0,
+    ['mock' as any]: 10
   };
 
   const workerHandler = async (bullJob: BullJob<DownloadJobData>) => {

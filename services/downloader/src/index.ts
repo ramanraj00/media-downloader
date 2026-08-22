@@ -13,13 +13,15 @@ async function start() {
     const workers = await setupWorkers(logger);
     
     logger.info('Syncing identity pool to Redis...');
-    await Promise.all([
-      identityPool.syncToRedis('instagram'),
-      identityPool.syncToRedis('twitter'),
-      identityPool.syncToRedis('tiktok'),
-      identityPool.syncToRedis('reddit'),
-      identityPool.syncToRedis('mock')
-    ]);
+    const platforms = ['instagram', 'twitter', 'tiktok', 'reddit', 'mock'];
+    await Promise.all(platforms.map(p => identityPool.syncToRedis(p)));
+    
+    // Background credential recovery sweeper
+    setInterval(() => {
+      Promise.all(platforms.map(p => identityPool.sweep(p))).catch(err => {
+        logger.error({ err }, 'Error in identity pool sweeper loop');
+      });
+    }, 10000);
     
     // Graceful shutdown
     process.once('SIGINT', async () => {

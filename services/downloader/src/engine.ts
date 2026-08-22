@@ -5,7 +5,6 @@ import { TwitterAdapter } from './platforms/twitter';
 import { TikTokAdapter } from './platforms/tiktok';
 import { RedditAdapter } from './platforms/reddit';
 import { CobaltAdapter } from './platforms/cobalt';
-import { MockAdapter } from './platforms/mockAdapter';
 import { config } from '@media-downloader/config';
 import fs from 'fs';
 import path from 'path';
@@ -29,7 +28,6 @@ const adapters: Partial<Record<string, PlatformAdapter>> = {
   [Platform.TWITTER]: new TwitterAdapter(),
   [Platform.TIKTOK]: new TikTokAdapter(),
   [Platform.REDDIT]: new RedditAdapter(),
-  ['mock']: new MockAdapter(),
 };
 
 
@@ -40,7 +38,6 @@ const distributedBreakers: Partial<Record<string, DistributedCircuitBreaker>> = 
   [Platform.TWITTER]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'twitter', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
   [Platform.TIKTOK]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'tiktok', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
   [Platform.REDDIT]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'reddit', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
-  ['mock']: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'mock', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
 };
 
 export const identityPool = new CredentialPool({ redisUrl: config.REDIS_URL });

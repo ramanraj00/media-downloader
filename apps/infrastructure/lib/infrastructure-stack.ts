@@ -53,7 +53,7 @@ export class InfrastructureStack extends cdk.Stack {
       securityGroups: [dbSecurityGroup],
       allocatedStorage: 20,
       multiAz: false,
-      deletionProtection: false, // For staging
+      deletionProtection: true, // For production
     });
 
     // 3. ElastiCache Redis
