@@ -12,11 +12,11 @@ export abstract class PlatformAdapter {
       '--quiet',
       '--no-warnings',
       '--no-playlist',
-      '-o', `'${outputDir}/%(id)s.%(ext)s'`,
+      '-o', `${outputDir}/%(id)s.%(ext)s`,
       '--socket-timeout', '60',
       '--retries', '3',
       '--extractor-retries', '3',
-      '--add-header', `'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'`,
+      '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
     ];
   }
 }

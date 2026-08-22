@@ -10,13 +10,13 @@ import {
   ContentNotFoundError
 } from '@media-downloader/core';
 import { CobaltAdapter } from './cobalt';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import util from 'util';
 import path from 'path';
 import fs from 'fs';
 import { createLogger } from '@media-downloader/logger';
 
-const execAsync = util.promisify(exec);
+const execFileAsync = util.promisify(execFile);
 const logger = createLogger('TikTokAdapter');
 
 /**
@@ -104,16 +104,16 @@ export class TikTokAdapter extends PlatformAdapter {
     const opts = this.getBaseYtDlpOpts(outputDir);
 
     if (options?.proxy) {
-      opts.push('--proxy', `'${options.proxy}'`);
+      opts.push('--proxy', options.proxy);
     }
     if (options?.cookies) {
-      opts.push('--cookies', `'${options.cookies}'`);
+      opts.push('--cookies', options.cookies);
     }
 
-    const command = `yt-dlp ${opts.join(' ')} --dump-json --no-simulate "${url}"`;
+    const finalOpts = [...opts, '--dump-json', '--no-simulate', url];
 
     try {
-      const { stdout } = await execAsync(command, { timeout: 120000 });
+      const { stdout } = await execFileAsync('yt-dlp', finalOpts, { timeout: 120000 });
       const info = JSON.parse(stdout);
       const actualPath = this.resolveFile(outputDir);
 
