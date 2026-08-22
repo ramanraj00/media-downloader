@@ -24,6 +24,7 @@ import {
   AuthRequiredError,
 } from '@media-downloader/core';
 import Redis from 'ioredis';
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 
 import { PlatformAdapter } from './platforms/adapter';
 
@@ -69,6 +70,7 @@ const distributedBreakers: Partial<Record<string, DistributedCircuitBreaker>> = 
 
 export const identityPool = new CredentialPool({ redisUrl: config.REDIS_URL });
 const redisClient = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
+const secretsManager = new SecretsManagerClient({ region: 'ap-south-1' });
 
 // ─── Extraction State Machine ────────────────────────────────────────────────
 
@@ -370,9 +372,18 @@ async function executeAuthenticated(
     const cookiePath = path.join(outputDir, `cookies_${job.jobId}_${Date.now()}.txt`);
     
     try {
-      // encryptedData contains the Netscape-format cookie string
-      fs.writeFileSync(cookiePath, authAcq.encryptedData, { mode: 0o600 });
-      // SECURITY: Never log cookie contents
+      let cookieString = authAcq.encryptedData;
+      
+      // Check if the credential is a Secrets Manager reference
+      if (cookieString.startsWith('/media-downloader/') || cookieString.startsWith('arn:aws:secretsmanager')) {
+        const command = new GetSecretValueCommand({ SecretId: cookieString });
+        const secretResponse = await secretsManager.send(command);
+        if (secretResponse.SecretString) {
+          cookieString = secretResponse.SecretString;
+        }
+      }
+
+      fs.writeFileSync(cookiePath, cookieString, { mode: 0o600 });
       logger.info({
         tier: 'AUTHENTICATED',
         attempt: attempt + 1,

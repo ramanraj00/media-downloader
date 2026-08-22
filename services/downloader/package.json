@@ -11,6 +11,7 @@
     "dev": "tsc -w & node --watch dist/index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1116.0",
     "@media-downloader/config": "*",
     "@media-downloader/core": "*",
     "@media-downloader/db": "*",

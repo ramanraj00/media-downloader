@@ -111,6 +111,11 @@ export class InfrastructureStack extends cdk.Stack {
       iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore')
     );
 
+    taskRole.addToPrincipalPolicy(new iam.PolicyStatement({
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: ['arn:aws:secretsmanager:*:*:secret:/media-downloader/*'],
+    }));
+
     // 6. ECS Cluster with Fargate Spot
     const cluster = new ecs.Cluster(this, 'MediaCluster', {
       vpc,
