@@ -118,7 +118,7 @@ export class RedditAdapter extends PlatformAdapter {
       opts.push('--cookies', `'${options.cookies}'`);
     }
 
-    const command = `yt-dlp ${opts.join(' ')} --dump-json "${url}"`;
+    const command = `yt-dlp ${opts.join(' ')} --dump-json --no-simulate "${url}"`;
 
     try {
       const { stdout } = await execAsync(command, { timeout: 120000 });
