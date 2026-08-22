@@ -7,6 +7,7 @@ export enum ErrorType {
   NOT_FOUND = 'not_found',
   PRIVATE = 'private',
   GEO_BLOCKED = 'geo_blocked',
+  DATACENTER_BLOCKED = 'datacenter_blocked',
   AGE_RESTRICTED = 'age_restricted',
   TOO_LARGE = 'too_large',
   UNSUPPORTED = 'unsupported',

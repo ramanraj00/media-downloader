@@ -7,7 +7,7 @@ import { QUEUES, DownloadJobData, JobStatus, ProcessJobData, Platform } from '@m
 import { users, jobs, db } from '@media-downloader/db';
 import { eq, sql } from 'drizzle-orm';
 import { processDownload } from './engine';
-import { AdmissionController, IdentitiesExhaustedError } from '@media-downloader/core';
+import { AdmissionController, IdentitiesExhaustedError, AccessBlockedError } from '@media-downloader/core';
 
 export async function setupWorkers(logger: Logger) {
   const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
@@ -81,6 +81,13 @@ export async function setupWorkers(logger: Logger) {
         jobLogger.info('Capacity exhausted, delaying job without consuming attempt');
         await bullJob.moveToDelayed(Date.now() + 5000, bullJob.token);
         throw new DelayedError();
+      }
+
+      // AccessBlockedError that escaped the engine means no fallback tier
+      // was available — treat as unrecoverable for this job.
+      if (error instanceof AccessBlockedError) {
+        jobLogger.warn({ errorType: error.constructor.name }, 'Access blocked with no fallback tier available');
+        throw new UnrecoverableError(error.message);
       }
       
       if (error.isRetryable === false) {

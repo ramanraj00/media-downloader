@@ -1,6 +1,14 @@
 import { PlatformAdapter } from './adapter';
 import { Platform } from '@media-downloader/types';
-import { TransientError, PermanentError } from '@media-downloader/core';
+import {
+  TransientError,
+  PermanentError,
+  GeoBlockedError,
+  DatacenterBlockedError,
+  AuthRequiredError,
+  AccessBlockedError,
+  ContentNotFoundError
+} from '@media-downloader/core';
 import { CobaltAdapter } from './cobalt';
 import { exec } from 'child_process';
 import util from 'util';
@@ -11,6 +19,14 @@ import { createLogger } from '@media-downloader/logger';
 const execAsync = util.promisify(exec);
 const logger = createLogger('TikTokAdapter');
 
+/**
+ * Platform capability flags for the extraction router.
+ */
+export const TIKTOK_CAPABILITIES = {
+  supportsAuthenticatedExtraction: false, // TikTok doesn't need login for public content
+  supportsEgressFallback: true,
+};
+
 export class TikTokAdapter extends PlatformAdapter {
   platform = Platform.TIKTOK;
 
@@ -18,59 +34,86 @@ export class TikTokAdapter extends PlatformAdapter {
     return url.includes('tiktok.com') || url.includes('vm.tiktok.com') || url.includes('vt.tiktok.com');
   }
 
+  /**
+   * Direct extraction — Tier 1 (Cobalt) then Tier 2 (yt-dlp).
+   * Throws typed errors for the extraction router to handle tier transitions.
+   */
   async extract(url: string, outputDir: string, identityId?: string): Promise<import("@media-downloader/types").ExtractionResult> {
+    let cobaltError: Error | null = null;
+    let ytdlpError: Error | null = null;
+
     // Tier 1: Try Cobalt first (fast, no credentials needed)
-    const cobaltResult = await this.tryCobalt(url, outputDir);
-    if (cobaltResult) return cobaltResult;
-
-    // Tier 2: Fall back to yt-dlp direct (no proxy, no cookies)
-    const ytdlpResult = await this.tryYtDlp(url, outputDir);
-    if (ytdlpResult) return ytdlpResult;
-
-    // Both tiers failed
-    throw new PermanentError(`TikTok extraction failed for ${url}: Cobalt and yt-dlp both failed`);
-  }
-
-  private async tryCobalt(url: string, outputDir: string): Promise<import("@media-downloader/types").ExtractionResult | null> {
     try {
-      logger.info({ url }, 'Tier 1: Attempting Cobalt extraction');
-      const cobalt = new CobaltAdapter();
-      cobalt.platform = this.platform;
-      const result = await cobalt.extract(url, outputDir);
-
-      if (result.status === 'success') {
-        logger.info({ url, source: 'cobalt' }, 'Cobalt extraction succeeded');
-        return result;
-      }
-
-      logger.warn({ url, status: result.status }, 'Cobalt returned non-success status');
-      return null;
+      return await this.tryCobalt(url, outputDir);
     } catch (err: any) {
-      // Distinguish error types for evidence/debugging
-      const isAuthError = err.message?.includes('auth');
-      const isFetchError = err.message?.includes('fetch');
-      const isAdmission = err.message?.includes('admission');
-
+      cobaltError = err;
       logger.warn({
         url,
-        errorType: isAuthError ? 'cobalt_auth_failure' : isFetchError ? 'cobalt_fetch_failure' : isAdmission ? 'cobalt_admission_full' : 'cobalt_error',
+        errorType: err.constructor.name,
         message: err.message?.substring(0, 200),
       }, 'Cobalt extraction failed, falling back to yt-dlp');
-
-      return null;
     }
+
+    // Tier 2: Fall back to yt-dlp direct (no proxy, no cookies)
+    try {
+      return await this.tryYtDlp(url, outputDir);
+    } catch (err: any) {
+      ytdlpError = err;
+      logger.warn({
+        url,
+        errorType: err.constructor.name,
+        message: err.message?.substring(0, 200),
+      }, 'yt-dlp extraction also failed');
+    }
+
+    // Both tiers failed — propagate the most specific error for the router.
+    // Priority: AccessBlockedError > PermanentError > TransientError
+    const bestError = this.pickMostSpecificError(cobaltError!, ytdlpError!);
+    throw bestError;
   }
 
-  private async tryYtDlp(url: string, outputDir: string): Promise<import("@media-downloader/types").ExtractionResult | null> {
+  /**
+   * Egress-routed extraction — Tier 3. Called by the engine with a proxy URL.
+   */
+  async extractWithProxy(url: string, outputDir: string, proxyUrl: string): Promise<import("@media-downloader/types").ExtractionResult> {
+    logger.info({ url, proxy: '***' }, 'Tier 3: Attempting yt-dlp extraction with egress proxy');
+    return this.tryYtDlp(url, outputDir, { proxy: proxyUrl });
+  }
+
+  private async tryCobalt(url: string, outputDir: string): Promise<import("@media-downloader/types").ExtractionResult> {
+    logger.info({ url }, 'Tier 1: Attempting Cobalt extraction');
+    const cobalt = new CobaltAdapter();
+    cobalt.platform = this.platform;
+    const result = await cobalt.extract(url, outputDir);
+
+    if (result.status === 'success') {
+      logger.info({ url, source: 'cobalt' }, 'Cobalt extraction succeeded');
+      return result;
+    }
+
+    throw new PermanentError(`Cobalt returned non-success status: ${result.status}`);
+  }
+
+  private async tryYtDlp(
+    url: string,
+    outputDir: string,
+    options?: { proxy?: string; cookies?: string }
+  ): Promise<import("@media-downloader/types").ExtractionResult> {
+    logger.info({ url, hasProxy: !!options?.proxy }, 'Attempting yt-dlp extraction');
+    const startTime = Date.now();
+    const opts = this.getBaseYtDlpOpts(outputDir);
+
+    if (options?.proxy) {
+      opts.push('--proxy', `'${options.proxy}'`);
+    }
+    if (options?.cookies) {
+      opts.push('--cookies', `'${options.cookies}'`);
+    }
+
+    const command = `yt-dlp ${opts.join(' ')} --dump-json "${url}"`;
+
     try {
-      logger.info({ url }, 'Tier 2: Attempting yt-dlp extraction');
-      const startTime = Date.now();
-      const opts = this.getBaseYtDlpOpts(outputDir);
-
-      // yt-dlp with --dump-json downloads AND prints metadata
-      const command = `yt-dlp ${opts.join(' ')} --dump-json "${url}"`;
       const { stdout } = await execAsync(command, { timeout: 120000 });
-
       const info = JSON.parse(stdout);
       const actualPath = this.resolveFile(outputDir);
 
@@ -99,12 +142,7 @@ export class TikTokAdapter extends PlatformAdapter {
       };
     } catch (error: any) {
       const stderr = error.stderr || error.message || '';
-      logger.warn({
-        url,
-        errorType: this.classifyYtDlpError(stderr),
-        message: stderr.substring(0, 200),
-      }, 'yt-dlp extraction failed');
-      return null;
+      throw this.classifyYtDlpError(stderr, url);
     }
   }
 
@@ -116,14 +154,73 @@ export class TikTokAdapter extends PlatformAdapter {
     throw new PermanentError(`File not found in output directory ${outputDir}`);
   }
 
-  private classifyYtDlpError(stderr: string): string {
+  /**
+   * Classifies yt-dlp stderr output into typed errors using platform-specific markers.
+   * TikTok-specific: "Unexpected response from webpage request" from India = GeoBlocked.
+   */
+  private classifyYtDlpError(stderr: string, url: string): Error {
     const lower = stderr.toLowerCase();
-    if (lower.includes('http error 429') || lower.includes('too many requests')) return 'rate_limit';
-    if (lower.includes('http error 403') || lower.includes('forbidden')) return 'forbidden';
-    if (lower.includes('http error 404') || lower.includes('not found')) return 'not_found';
-    if (lower.includes('unsupported url')) return 'unsupported_url';
-    if (lower.includes('private') || lower.includes('login')) return 'auth_required';
-    if (lower.includes('timeout') || lower.includes('timed out')) return 'timeout';
-    return 'unknown';
+
+    // TikTok geo-block: "Unexpected response from webpage request" is the canonical
+    // signal when TikTok is accessed from a banned region (India).
+    // We combine this with the fact that we KNOW we're on TikTok platform.
+    if (lower.includes('unexpected response from webpage request') ||
+        lower.includes('unable to download webpage') ||
+        (lower.includes('http error 302') && lower.includes('tiktok'))) {
+      return new GeoBlockedError(
+        `TikTok yt-dlp geo-blocked: ${stderr.substring(0, 200)}`,
+        'tiktok'
+      );
+    }
+
+    // Rate limiting
+    if (lower.includes('http error 429') || lower.includes('too many requests')) {
+      return new TransientError(`TikTok rate limited: ${stderr.substring(0, 200)}`);
+    }
+
+    // Content not found
+    if (lower.includes('http error 404') || lower.includes('unable to extract') || lower.includes('video is unavailable')) {
+      return new ContentNotFoundError(`TikTok content not found: ${stderr.substring(0, 200)}`, 'tiktok');
+    }
+
+    // Unsupported
+    if (lower.includes('unsupported url')) {
+      return new PermanentError(`TikTok unsupported URL: ${stderr.substring(0, 200)}`);
+    }
+
+    // Auth / login required
+    if (lower.includes('login') || lower.includes('sign in')) {
+      return new AuthRequiredError(`TikTok auth required: ${stderr.substring(0, 200)}`, 'tiktok');
+    }
+
+    // Timeout
+    if (lower.includes('timeout') || lower.includes('timed out')) {
+      return new TransientError(`TikTok timeout: ${stderr.substring(0, 200)}`);
+    }
+
+    // Forbidden — could be datacenter block
+    if (lower.includes('http error 403') || lower.includes('forbidden')) {
+      return new DatacenterBlockedError(`TikTok 403 (likely datacenter block): ${stderr.substring(0, 200)}`, 'tiktok');
+    }
+
+    // Default: treat as transient to allow BullMQ retry
+    return new TransientError(`TikTok yt-dlp unknown error: ${stderr.substring(0, 200)}`);
+  }
+
+  /**
+   * Given errors from Cobalt and yt-dlp, pick the most actionable one for the router.
+   * AccessBlockedError > PermanentError > TransientError
+   */
+  private pickMostSpecificError(cobaltErr: Error, ytdlpErr: Error): Error {
+    // If either is an AccessBlockedError, prefer it — it drives tier transitions
+    if (ytdlpErr instanceof AccessBlockedError) return ytdlpErr;
+    if (cobaltErr instanceof AccessBlockedError) return cobaltErr;
+
+    // If either is permanent, prefer it
+    if (ytdlpErr instanceof PermanentError) return ytdlpErr;
+    if (cobaltErr instanceof PermanentError) return cobaltErr;
+
+    // Default to yt-dlp error (last attempted)
+    return ytdlpErr;
   }
 }

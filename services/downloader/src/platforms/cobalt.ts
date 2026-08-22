@@ -1,6 +1,12 @@
 import { Platform } from '@media-downloader/types';
 import { PlatformAdapter } from './adapter';
-import { TransientError, PermanentError, AdmissionController } from '@media-downloader/core';
+import {
+  TransientError,
+  PermanentError,
+  GeoBlockedError,
+  DatacenterBlockedError,
+  AdmissionController
+} from '@media-downloader/core';
 import { config } from '@media-downloader/config';
 import fs from 'fs';
 import path from 'path';
@@ -47,7 +53,7 @@ export class CobaltAdapter extends PlatformAdapter {
       }
 
       const responseText = await response.text();
-      let data;
+      let data: any;
       try {
         data = JSON.parse(responseText);
       } catch (e) {
@@ -56,12 +62,12 @@ export class CobaltAdapter extends PlatformAdapter {
         }
       }
       
-      if (!response.ok) {
-        throw new PermanentError(`Cobalt returned ${response.status}: ${data?.text || responseText}`);
-      }
-
-      if (data?.status === 'error') {
-        throw new PermanentError(`Cobalt error: ${data.text}`);
+      if (!response.ok || data?.status === 'error') {
+        const errorCode = data?.error?.code || '';
+        const errorContext = data?.error?.context?.service || '';
+        
+        // Classify Cobalt-specific errors into typed errors
+        this.classifyCobaltError(errorCode, errorContext, response.status, responseText);
       }
 
       const streamUrl = data?.url;
@@ -94,7 +100,8 @@ export class CobaltAdapter extends PlatformAdapter {
         metadata: { url: urlStr, platform: this.platform, ext: 'mp4', downloadTimeMs: Date.now() - startTime }
       };
     } catch (err: any) {
-      if (err instanceof TransientError || err instanceof PermanentError) {
+      if (err instanceof TransientError || err instanceof PermanentError ||
+          err instanceof GeoBlockedError || err instanceof DatacenterBlockedError) {
         throw err;
       }
       if (err.cause?.code === 'ECONNREFUSED' || err.code === 'ECONNREFUSED') {
@@ -104,5 +111,54 @@ export class CobaltAdapter extends PlatformAdapter {
     } finally {
       await this.admission.release('cobalt', token);
     }
+  }
+
+  /**
+   * Classifies Cobalt error responses into typed errors.
+   * Cobalt returns structured JSON errors like:
+   *   { "status": "error", "error": { "code": "error.api.fetch.fail", "context": { "service": "tiktok" } } }
+   */
+  private classifyCobaltError(errorCode: string, contextService: string, httpStatus: number, rawText: string): never {
+    // error.api.fetch.fail → The upstream platform rejected Cobalt's request.
+    // This is typically a geo-block or datacenter IP block.
+    if (errorCode === 'error.api.fetch.fail') {
+      // TikTok from India → geo-block (India ban)
+      if (contextService === 'tiktok') {
+        throw new GeoBlockedError(
+          `Cobalt: TikTok fetch failed (likely geo-blocked). Code: ${errorCode}`,
+          'tiktok'
+        );
+      }
+      // Reddit from AWS datacenter IP → datacenter block
+      if (contextService === 'reddit') {
+        throw new DatacenterBlockedError(
+          `Cobalt: Reddit fetch failed (likely datacenter IP blocked). Code: ${errorCode}`,
+          'reddit'
+        );
+      }
+      // Generic platform fetch failure — treat as datacenter block by default
+      throw new DatacenterBlockedError(
+        `Cobalt: Fetch failed for service=${contextService}. Code: ${errorCode}`,
+        contextService || undefined
+      );
+    }
+
+    // error.api.content.video.unavailable → content genuinely unavailable
+    if (errorCode.includes('content') && errorCode.includes('unavailable')) {
+      throw new PermanentError(`Cobalt: Content unavailable. Code: ${errorCode}`);
+    }
+
+    // error.api.link.unsupported → URL not supported by Cobalt
+    if (errorCode.includes('unsupported')) {
+      throw new PermanentError(`Cobalt: Unsupported URL. Code: ${errorCode}`);
+    }
+
+    // error.api.invalid_body → bad payload (our bug, not platform's)
+    if (errorCode === 'error.api.invalid_body') {
+      throw new PermanentError(`Cobalt: Invalid request body. Code: ${errorCode}`);
+    }
+
+    // Fallback: unknown Cobalt error
+    throw new PermanentError(`Cobalt returned ${httpStatus}: ${rawText}`);
   }
 }
