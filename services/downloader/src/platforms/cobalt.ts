@@ -5,6 +5,7 @@ import {
   PermanentError,
   GeoBlockedError,
   DatacenterBlockedError,
+  AuthRequiredError,
   AdmissionController
 } from '@media-downloader/core';
 import { config } from '@media-downloader/config';
@@ -75,13 +76,23 @@ export class CobaltAdapter extends PlatformAdapter {
         throw new PermanentError('Cobalt returned success but no URL');
       }
 
+      const filename = data?.filename || '';
+      if (this.platform === 'instagram' && urlStr.includes('/reel/') && (filename.endsWith('.jpg') || filename.endsWith('.webp') || filename.endsWith('.png'))) {
+        throw new AuthRequiredError('Cobalt returned a thumbnail instead of a reel video. Instagram login required.');
+      }
+      
+      let ext = 'mp4';
+      if (filename.includes('.')) {
+         ext = filename.split('.').pop() || 'mp4';
+      }
+
       // 2. Download the media
       const mediaResponse = await fetch(streamUrl);
       if (!mediaResponse.ok) {
         throw new TransientError(`Cobalt media stream returned ${mediaResponse.status}`);
       }
 
-      const filePath = path.join(outputDir, `cobalt_${crypto.randomUUID()}.mp4`);
+      const filePath = path.join(outputDir, `cobalt_${crypto.randomUUID()}.${ext}`);
       const fileStream = fs.createWriteStream(filePath);
       
       if (mediaResponse.body) {
@@ -97,7 +108,7 @@ export class CobaltAdapter extends PlatformAdapter {
         status: 'success',
         source: 'cobalt',
         filePath,
-        metadata: { url: urlStr, platform: this.platform, ext: 'mp4', downloadTimeMs: Date.now() - startTime }
+        metadata: { url: urlStr, platform: this.platform, ext, downloadTimeMs: Date.now() - startTime }
       };
     } catch (err: any) {
       if (err instanceof TransientError || err instanceof PermanentError ||

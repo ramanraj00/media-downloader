@@ -23,7 +23,7 @@ export class DistributedCircuitBreaker {
     this.resetTimeoutMs = config.resetTimeoutMs;
   }
 
-  public async execute<T>(action: () => Promise<T>): Promise<T> {
+  public async execute<T>(action: () => Promise<T>, shouldTrip?: (err: Error) => boolean): Promise<T> {
     const stateKey = `cb:${this.name}:state`;
     const failuresKey = `cb:${this.name}:failures`;
     const lastFailureKey = `cb:${this.name}:last_failure`;
@@ -58,8 +58,13 @@ export class DistributedCircuitBreaker {
       const result = await action();
       await this.onSuccess(stateKey, failuresKey, halfOpenLockKey, halfOpenToken);
       return result;
-    } catch (error) {
-      await this.onFailure(stateKey, failuresKey, lastFailureKey, halfOpenLockKey, halfOpenToken);
+    } catch (error: any) {
+      if (shouldTrip ? shouldTrip(error) : true) {
+        await this.onFailure(stateKey, failuresKey, lastFailureKey, halfOpenLockKey, halfOpenToken);
+      } else {
+        // Still register success to clear half-open states since this wasn't a catastrophic API failure
+        await this.onSuccess(stateKey, failuresKey, halfOpenLockKey, halfOpenToken);
+      }
       throw error;
     }
   }

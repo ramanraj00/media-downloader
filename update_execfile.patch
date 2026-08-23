@@ -1,0 +1,81 @@
+--- services/downloader/src/platforms/reddit.ts
++++ services/downloader/src/platforms/reddit.ts
+@@ -2,7 +2,7 @@
+ import { PlatformAdapter } from './adapter';
+ import { Platform, ExtractionResult } from '@media-downloader/types';
+ import { createLogger } from '@media-downloader/logger';
+-import { exec } from 'child_process';
++import { execFile } from 'child_process';
+ import { promisify } from 'util';
+ import path from 'path';
+ import fs from 'fs/promises';
+@@ -10,7 +10,7 @@
+   TransientError
+ } from '../errors';
+ 
+-const execAsync = promisify(exec);
++const execFileAsync = promisify(execFile);
+ const logger = createLogger('reddit-adapter');
+ 
+ export class RedditAdapter extends PlatformAdapter {
+@@ -118,10 +118,10 @@
+       opts.push('--cookies', `'${options.cookies}'`);
+     }
+ 
+-    const command = `yt-dlp ${opts.join(' ')} --dump-json --no-simulate "${url}"`;
++    const finalOpts = [...opts, '--dump-json', '--no-simulate', url];
+ 
+     try {
+-      const { stdout } = await execAsync(command, { timeout: 120000 });
++      const { stdout } = await execFileAsync('yt-dlp', finalOpts, { timeout: 120000 });
+       const info = JSON.parse(stdout);
+       const actualPath = this.resolveFile(outputDir);
+ 
+--- services/downloader/src/platforms/tiktok.ts
++++ services/downloader/src/platforms/tiktok.ts
+@@ -2,14 +2,14 @@
+ import { PlatformAdapter } from './adapter';
+ import { Platform, ExtractionResult } from '@media-downloader/types';
+ import { createLogger } from '@media-downloader/logger';
+-import { exec } from 'child_process';
++import { execFile } from 'child_process';
+ import { promisify } from 'util';
+ import path from 'path';
+ import fs from 'fs/promises';
+ import { GeoBlockedError, DatacenterBlockedError, PermanentError, TransientError } from '../errors';
+ 
+ const logger = createLogger('tiktok-adapter');
+-const execAsync = promisify(exec);
++const execFileAsync = promisify(execFile);
+ 
+ export class TikTokAdapter extends PlatformAdapter {
+   platform: Platform = 'tiktok';
+@@ -112,10 +112,10 @@
+       opts.push('--cookies', `'${options.cookies}'`);
+     }
+ 
+-    const command = `yt-dlp ${opts.join(' ')} --dump-json --no-simulate "${url}"`;
++    const finalOpts = [...opts, '--dump-json', '--no-simulate', url];
+ 
+     try {
+-      const { stdout } = await execAsync(command, { timeout: 120000 });
++      const { stdout } = await execFileAsync('yt-dlp', finalOpts, { timeout: 120000 });
+       const info = JSON.parse(stdout);
+       const actualPath = this.resolveFile(outputDir);
+ 
+--- services/downloader/src/platforms/adapter.ts
++++ services/downloader/src/platforms/adapter.ts
+@@ -13,11 +13,12 @@
+       '--quiet',
+       '--no-warnings',
+       '--no-playlist',
+-      '-o', `'/tmp/%(id)s.%(ext)s'`,
++      '-o', `${outputDir}/%(id)s.%(ext)s`,
+       '--socket-timeout', '60',
+       '--retries', '3',
+       '--extractor-retries', '3',
+-      '--add-header', `'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'`,
++      '--add-header', 'User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+     ];
+   }
+ }

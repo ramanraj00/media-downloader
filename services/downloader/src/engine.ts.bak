@@ -1,7 +1,7 @@
 import { Logger } from 'pino';
 import { DownloadJobData, DownloadResult, Platform } from '@media-downloader/types';
-import { InstagramAdapter, INSTAGRAM_CAPABILITIES } from './platforms/instagram';
-import { TwitterAdapter, TWITTER_CAPABILITIES } from './platforms/twitter';
+import { InstagramAdapter } from './platforms/instagram';
+import { TwitterAdapter } from './platforms/twitter';
 import { TikTokAdapter, TIKTOK_CAPABILITIES } from './platforms/tiktok';
 import { RedditAdapter, REDDIT_CAPABILITIES } from './platforms/reddit';
 import { CobaltAdapter } from './platforms/cobalt';
@@ -22,7 +22,6 @@ import {
   GeoBlockedError,
   DatacenterBlockedError,
   AuthRequiredError,
-  CircuitBreakerOpenError,
 } from '@media-downloader/core';
 import Redis from 'ioredis';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
@@ -220,7 +219,7 @@ async function executeDirect(
   logger: Logger
 ): Promise<DownloadResult> {
   // For platforms that strictly require credentials upfront
-  const requiresIdentity = false; // Cobalt might work without credentials, let it try and throw AuthRequiredError if needed
+  const requiresIdentity = platform === Platform.INSTAGRAM || platform === Platform.TWITTER;
   
   const acq = await identityPool.acquire(platform);
   
@@ -235,10 +234,7 @@ async function executeDirect(
   try {
     logger.info({ tier: 'DIRECT', identityId, platform }, 'Attempting direct extraction (Cobalt → yt-dlp)');
 
-    const extResult = await breaker.execute(
-      () => adapter.extract(job.url, outputDir, encryptedData),
-      (err) => err instanceof DatacenterBlockedError || err instanceof TransientError
-    );
+    const extResult = await breaker.execute(() => adapter.extract(job.url, outputDir, encryptedData));
     
     if (extResult.status !== 'success' || !extResult.filePath) {
       throw new PermanentError(`Extraction failed or no filePath: ${extResult.status}`);
@@ -288,7 +284,9 @@ async function executeEgress(
 
     if (!egressAcq) {
       logger.warn({ attempt }, 'No egress identities available in pool');
-      throw new IdentitiesExhaustedError(`Egress tier exhausted: no proxy identities available`, 'egress');
+      throw new PermanentError(
+        `Egress tier exhausted: no proxy identities available (attempt ${attempt + 1}/${TIER3_MAX_EGRESS_ATTEMPTS})`
+      );
     }
 
     const proxyUrl = egressAcq.encryptedData; // encryptedData stores the proxy URL
@@ -365,7 +363,9 @@ async function executeAuthenticated(
 
     if (!authAcq) {
       logger.warn({ attempt }, 'No authenticated credentials available for platform');
-      throw new IdentitiesExhaustedError(`Authenticated tier exhausted: no credentials available for ${platform}`, platform);
+      throw new PermanentError(
+        `Authenticated tier exhausted: no credentials available for ${platform} (attempt ${attempt + 1}/${TIER4_MAX_AUTH_ATTEMPTS})`
+      );
     }
 
     // Write cookie to a job-scoped temporary file
@@ -454,11 +454,11 @@ function classifyErrorForTierTransition(
   if (currentTier !== 'DIRECT') return null;
 
   // GeoBlocked or DatacenterBlocked → route to EGRESS tier (if supported)
-  if (error instanceof GeoBlockedError || error instanceof DatacenterBlockedError || error instanceof CircuitBreakerOpenError) {
+  if (error instanceof GeoBlockedError || error instanceof DatacenterBlockedError) {
     if (capabilities.supportsEgressFallback) {
       return {
         nextTier: 'EGRESS',
-        reason: error instanceof CircuitBreakerOpenError ? 'circuit_breaker_open' : (error instanceof GeoBlockedError ? 'geo_blocked' : 'datacenter_blocked'),
+        reason: error instanceof GeoBlockedError ? 'geo_blocked' : 'datacenter_blocked',
       };
     }
     // Platform doesn't support egress fallback — declare permanent

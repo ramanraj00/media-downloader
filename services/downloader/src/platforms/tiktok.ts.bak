@@ -199,7 +199,7 @@ export class TikTokAdapter extends PlatformAdapter {
     }
 
     // Forbidden — could be datacenter block
-    if (lower.includes("http error 403") || lower.includes("forbidden") || lower.includes("your ip address is blocked")) {
+    if (lower.includes('http error 403') || lower.includes('forbidden')) {
       return new DatacenterBlockedError(`TikTok 403 (likely datacenter block): ${stderr.substring(0, 200)}`, 'tiktok');
     }
 

@@ -2,12 +2,14 @@ import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
+import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import * as elasticache from 'aws-cdk-lib/aws-elasticache';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as autoscaling from 'aws-cdk-lib/aws-autoscaling';
 
 export class MediaDownloaderStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -82,7 +84,8 @@ export class MediaDownloaderStack extends cdk.Stack {
     const cluster = new ecs.Cluster(this, 'MediaDLCluster', { vpc });
 
     // EC2 Spot Capacity for Workers
-    const spotAsg = cluster.addCapacity('SpotASG', {
+    const spotAsg = new autoscaling.AutoScalingGroup(this, 'SpotASG', {
+      vpc,
       instanceType: new ec2.InstanceType('t3.medium'),
       machineImage: ecs.EcsOptimizedImage.amazonLinux2(),
       spotPrice: '0.02', // Spot fallback
@@ -91,7 +94,8 @@ export class MediaDownloaderStack extends cdk.Stack {
     });
 
     // EC2 On-Demand Capacity for Bot/Control Plane
-    const onDemandAsg = cluster.addCapacity('OnDemandASG', {
+    const onDemandAsg = new autoscaling.AutoScalingGroup(this, 'OnDemandASG', {
+      vpc,
       instanceType: new ec2.InstanceType('t3.small'),
       machineImage: ecs.EcsOptimizedImage.amazonLinux2(),
       minCapacity: 1,

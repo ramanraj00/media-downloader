@@ -205,6 +205,31 @@ export async function submitJob(req: SubmitJobRequest) {
         if (!existingJob) {
           throw new Error('Job conflict occurred but existing job could not be found');
         }
+        
+        if (existingJob.status === 'failed_permanently' || existingJob.status === 'failed_transiently') {
+           // Reset the job and retry
+           const [updatedJob] = await tx.update(jobs)
+              .set({ status: 'queued', updatedAt: new Date(), })
+              .where(eq(jobs.id, existingJob.id))
+              .returning();
+           
+           await tx.insert(outboxEvents).values({
+              eventType: 'DOWNLOAD_REQUESTED',
+              aggregateId: updatedJob.id,
+              payload: {
+                jobId: updatedJob.id,
+                url: updatedJob.url,
+                urlHash: updatedJob.urlHash,
+                platform: updatedJob.platform,
+              },
+           });
+           
+           return {
+             jobId: updatedJob.id,
+             status: 'queued',
+             isDuplicate: false,
+           };
+        }
 
         return {
           jobId: existingJob.id,

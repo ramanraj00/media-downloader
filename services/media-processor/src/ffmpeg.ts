@@ -112,7 +112,7 @@ export async function normalizeVideo(
   let videoBitrate = probe.fileSize > config.MAX_FILE_SIZE * 2 ? '1M' : '2M';
   const audioCodecStr = selectedAudio ? `-c:a aac -b:a 128k ${filterArgs}` : '';
 
-  const cmd = `ffmpeg -y -i "${inputPath}" ${mapArgs} -c:v libx264 -preset medium -b:v ${videoBitrate} -pass 1 -an -f mp4 /dev/null && ffmpeg -y -i "${inputPath}" ${mapArgs} -c:v libx264 -preset medium -b:v ${videoBitrate} -pass 2 ${audioCodecStr} -movflags +faststart "${outputPath}"`;
+  const cmd = `ffmpeg -y -i "${inputPath}" ${mapArgs} -c:v libx264 -preset ultrafast -crf 28 ${audioCodecStr} -movflags +faststart "${outputPath}"`;
   
   try {
     logger.info({ cmd }, 'Executing FFmpeg command');

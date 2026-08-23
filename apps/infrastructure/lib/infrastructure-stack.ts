@@ -75,6 +75,7 @@ export class InfrastructureStack extends cdk.Stack {
 
     // Allow ECS to access RDS and Redis
     const ecsSecurityGroup = new ec2.SecurityGroup(this, 'EcsSecurityGroup', { vpc });
+    ecsSecurityGroup.addIngressRule(ecsSecurityGroup, ec2.Port.tcp(3000), 'Allow internal API access');
     dbSecurityGroup.addIngressRule(ecsSecurityGroup, ec2.Port.tcp(5432), 'Allow ECS access to RDS');
     redisSecurityGroup.addIngressRule(ecsSecurityGroup, ec2.Port.tcp(6379), 'Allow ECS access to Redis');
 
@@ -132,6 +133,7 @@ export class InfrastructureStack extends cdk.Stack {
       REDIS_URL: `redis://${redis.attrRedisEndpointAddress}:${redis.attrRedisEndpointPort}`,
       S3_BUCKET: artifactBucket.bucketName,
       COBALT_URL: 'http://cobalt.media.internal:9000',
+      API_URL: 'http://api.media.internal:3000',
     };
 
     const botTokenParam = ssm.StringParameter.fromSecureStringParameterAttributes(this, 'BotTokenParam', {
@@ -169,6 +171,7 @@ export class InfrastructureStack extends cdk.Stack {
             COBALT_API_KEY: ecs.Secret.fromSsmParameter(cobaltTokenParam),
           },
           logging: ecs.LogDrivers.awsLogs({ streamPrefix: name }),
+          portMappings: [{ containerPort: 3000 }],
         });
       }
 
@@ -177,6 +180,7 @@ export class InfrastructureStack extends cdk.Stack {
         taskDefinition: taskDef,
         securityGroups: [ecsSecurityGroup],
         enableExecuteCommand: opts?.enableExec ?? false,
+        cloudMapOptions: { name: name.toLowerCase() },
         capacityProviderStrategies: [
           {
             capacityProvider: 'FARGATE_SPOT',
@@ -191,6 +195,8 @@ export class InfrastructureStack extends cdk.Stack {
     createTask('Processor', '@media-downloader/media-processor');
     createTask('Delivery', '@media-downloader/delivery');
     createTask('Relay', '@media-downloader/outbox-publisher');
+    createTask('Bot', '@media-downloader/bot');
+    createTask('Api', '@media-downloader/api');
 
     // 8. Cobalt Internal API Service
     const cobaltSecurityGroup = new ec2.SecurityGroup(this, 'CobaltSecurityGroup', { vpc });

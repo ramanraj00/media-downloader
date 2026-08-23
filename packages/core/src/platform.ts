@@ -8,7 +8,7 @@ const PLATFORM_PATTERNS = {
   [Platform.TWITTER]: [
     /twitter\.com/i,
     /x\.com/i,
-    /t\.co/i,
+    /:\/\/t\.co\//i,
     /fixupx\.com/i,
     /vxtwitter\.com/i,
     /fxtwitter\.com/i,
