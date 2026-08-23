@@ -74,8 +74,8 @@ export async function setupWorker(logger: Logger) {
           if (!postFlightProbe.hasVideo) {
             throw new Error('Output validation failed: Expected video stream but none found');
           }
-          if (postFlightProbe.videoCodec !== 'h264') {
-            throw new Error(`Output validation failed: Expected canonical H.264 video, got ${postFlightProbe.videoCodec}`);
+          if (postFlightProbe.videoCodec !== 'h264' && postFlightProbe.videoCodec !== 'hevc' && postFlightProbe.videoCodec !== 'h265') {
+            throw new Error(`Output validation failed: Expected canonical H.264/HEVC video, got ${postFlightProbe.videoCodec}`);
           }
         }
         if (result.hasAudio) {
@@ -100,7 +100,8 @@ export async function setupWorker(logger: Logger) {
         
         // 2. Upload Processed Artifact to S3
         jobLogger.info('Uploading processed artifact to S3');
-        const objectKey = `jobs/${bullJob.data.jobId}/processed/video.mp4`;
+        const ext = require("path").extname(result.filePath) || ".mp4";
+        const objectKey = `jobs/${bullJob.data.jobId}/processed/media${ext}`;
         const processedArtifactRef = await s3.putArtifact(config.ARTIFACT_BUCKET, objectKey, result.filePath);
         result.s3Artifact = processedArtifactRef;
 

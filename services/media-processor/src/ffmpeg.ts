@@ -88,7 +88,7 @@ export async function normalizeVideo(
   if (isCompatible) {
     const outputPath = inputPath.replace(ext, '_faststart.mp4');
     try {
-      logger.info('Video is canonical (H264/AAC/MP4). Applying copy + faststart.');
+      logger.info('Video is canonical (H264/HEVC/AAC/MP4). Applying copy + faststart.');
       const cmd = `ffmpeg -y -i "${inputPath}" ${mapArgs} -c copy -movflags +faststart "${outputPath}"`;
       logger.info({ cmd }, 'Executing FFmpeg command');
       await execAsync(cmd);
@@ -112,7 +112,7 @@ export async function normalizeVideo(
   let videoBitrate = probe.fileSize > config.MAX_FILE_SIZE * 2 ? '1M' : '2M';
   const audioCodecStr = selectedAudio ? `-c:a aac -b:a 128k ${filterArgs}` : '';
 
-  const cmd = `ffmpeg -y -i "${inputPath}" ${mapArgs} -c:v libx264 -preset ultrafast -crf 28 ${audioCodecStr} -movflags +faststart "${outputPath}"`;
+  const cmd = `ffmpeg -y -i "${inputPath}" ${mapArgs} -c:v libx264 -threads 1 -preset ultrafast -crf 28 ${audioCodecStr} -movflags +faststart "${outputPath}"`;
   
   try {
     logger.info({ cmd }, 'Executing FFmpeg command');

@@ -84,6 +84,13 @@ export class CobaltAdapter extends PlatformAdapter {
       let ext = 'mp4';
       if (filename.includes('.')) {
          ext = filename.split('.').pop() || 'mp4';
+      } else if (data?.url && data.url.includes('.')) {
+         // Extract from URL (e.g. redirect to .jpg)
+         let urlExt;
+         try { urlExt = new URL(data.url).pathname.split('.').pop(); } catch(e) {}
+         if (urlExt && ['jpg', 'jpeg', 'png', 'webp', 'mp4', 'webm', 'gif'].includes(urlExt.toLowerCase())) {
+            ext = urlExt.toLowerCase();
+         }
       }
 
       // 2. Download the media

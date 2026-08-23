@@ -10,8 +10,7 @@ code = code.replace(
             statusMsg.message_id, 
             '✅ Found in cache! Processing...'
           );
-        }
-`,
+        }`,
 `        if (response.isDuplicate && response.telegramFileId) {
           await ctx.api.deleteMessage(ctx.chat.id, statusMsg.message_id).catch(() => {});
           try {
@@ -25,14 +24,7 @@ code = code.replace(
              });
           }
           continue;
-        } else if (response.isDuplicate) {
-          await ctx.api.editMessageText(
-            ctx.chat.id, 
-            statusMsg.message_id, 
-            '✅ Found in cache! Processing...'
-          );
-        }
-`
+        }`
 );
 
 fs.writeFileSync('apps/bot/src/handlers/download.ts', code);
