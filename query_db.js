@@ -7,9 +7,7 @@ async function run() {
   console.log("Recent Jobs:");
   allJobs.forEach(j => {
     let diff = 'N/A';
-    if (j.completedAt) {
-      diff = (j.completedAt.getTime() - j.createdAt.getTime()) / 1000 + 's';
-    }
+    if (j.completedAt) diff = (j.completedAt.getTime() - j.createdAt.getTime()) / 1000 + 's';
     console.log(`${j.id} | ${j.platform} | ${j.status} | time: ${diff} | ${j.url}`);
   });
   process.exit(0);

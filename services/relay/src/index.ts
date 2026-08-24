@@ -206,6 +206,19 @@ export async function handleTerminalFailure(jobId: string, failedReason: string,
             .where(sql`${users.id} = ${currentJob.userId} AND ${users.activeJobs} > 0`);
             
           logger.info({ jobId, queueName, failedReason }, 'Job marked FAILED_PERMANENTLY and quota released');
+          
+          if (currentJob.chatId && currentJob.statusMessageId) {
+            const tgUrl = `https://api.telegram.org/bot${config.BOT_TOKEN}/editMessageText`;
+            fetch(tgUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                chat_id: currentJob.chatId,
+                message_id: currentJob.statusMessageId,
+                text: '❌ Failed to process request.\n(Could not find any media, or the link is private)'
+              })
+            }).catch(e => logger.error({ err: e }, 'Failed to send failure notification to Telegram'));
+          }
         }
       } else {
         await tx.update(jobs)
