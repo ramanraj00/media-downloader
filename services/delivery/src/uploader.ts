@@ -9,6 +9,7 @@ const bot = new Bot(config.BOT_TOKEN);
 export async function uploadToTelegram(
   data: UploadJobData, 
   localPath: string,
+  thumbLocalPath: string | undefined,
   jobRecord: any, 
   logger: Logger
 ): Promise<{ fileId: string; messageId: number }> {
@@ -52,8 +53,18 @@ export async function uploadToTelegram(
 
     if (mediaType === 'video') {
       logger.info('Uploading as Video');
+      
+      let thumbInput = undefined;
+      if (thumbLocalPath && fs.existsSync(thumbLocalPath)) {
+         thumbInput = new InputFile(thumbLocalPath);
+      }
+      
       const msg = await bot.api.sendVideo(jobRecord.chatId, file, {
         caption: `📥 Downloaded via ${botName}`,
+        width: data.width,
+        height: data.height,
+        duration: data.duration ? Math.round(data.duration) : undefined,
+        thumbnail: thumbInput
       });
       fileId = msg.video.file_id;
       messageId = msg.message_id;

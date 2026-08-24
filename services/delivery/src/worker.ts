@@ -42,9 +42,20 @@ export async function setupWorker(logger: Logger) {
           // Download artifact from S3
           jobLogger.info('Downloading processed artifact from S3 for delivery');
           await s3.getArtifact(bullJob.data.processedArtifact, localPath);
+          let thumbLocalPath = undefined;
+          if (bullJob.data.thumbArtifact) {
+             thumbLocalPath = `/tmp/${bullJob.data.jobId}_thumb.jpg`;
+             try {
+                await s3.getArtifact(bullJob.data.thumbArtifact, thumbLocalPath);
+             } catch(e) {
+                jobLogger.warn('Failed to download thumb artifact');
+                thumbLocalPath = undefined;
+             }
+          }
 
           // Upload to Telegram
-          const { fileId, messageId } = await uploadToTelegram(bullJob.data, localPath, jobRecord, jobLogger);
+          const { fileId, messageId } = await uploadToTelegram(bullJob.data, localPath, thumbLocalPath, jobRecord, jobLogger);
+          if (thumbLocalPath) try { require('fs').unlinkSync(thumbLocalPath); } catch(e) {}
           
           // Immediately persist durable identifiers and update state
           await db.update(jobs)

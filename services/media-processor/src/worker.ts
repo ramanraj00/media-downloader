@@ -24,7 +24,8 @@ export async function setupWorker(logger: Logger) {
       const jobLogger = withJobContext(logger, bullJob.data.jobId, 'process');
       jobLogger.info('Received process job');
       
-      const inputPath = path.join(config.TEMP_DIR, `job_${bullJob.data.jobId}_raw.mp4`);
+      const originalExt = require('path').extname(bullJob.data.rawArtifact.objectKey) || '.mp4';
+      const inputPath = path.join(config.TEMP_DIR, `job_${bullJob.data.jobId}_raw${originalExt}`);
 
       try {
         const jobRecord = await db.query.jobs.findFirst({
@@ -98,6 +99,29 @@ export async function setupWorker(logger: Logger) {
         // Calculate file hash for finalization
         const contentHash = await calculateFileHash(result.filePath);
         
+        // Extract thumbnail
+        let thumbArtifactRef;
+        if (mediaType === 'video') {
+          jobLogger.info('Extracting thumbnail');
+          const thumbPath = `/tmp/${bullJob.data.jobId}_thumb.jpg`;
+          try {
+            // try to extract at 1s, fallback to 0s
+            const execAsync = require('util').promisify(require('child_process').exec);
+            try {
+              await execAsync(`ffmpeg -y -ss 00:00:01 -i "${result.filePath}" -vframes 1 -vf "scale='min(320,iw)':'min(320,ih)':force_original_aspect_ratio=decrease" -q:v 2 "${thumbPath}"`);
+            } catch(e) {
+              await execAsync(`ffmpeg -y -i "${result.filePath}" -vframes 1 -vf "scale='min(320,iw)':'min(320,ih)':force_original_aspect_ratio=decrease" -q:v 2 "${thumbPath}"`);
+            }
+            if (require('fs').existsSync(thumbPath)) {
+               const thumbKey = `jobs/${bullJob.data.jobId}/processed/thumb.jpg`;
+               thumbArtifactRef = await s3.putArtifact(config.ARTIFACT_BUCKET, thumbKey, thumbPath);
+               require('fs').unlinkSync(thumbPath);
+            }
+          } catch(e) {
+            jobLogger.warn({ err: e }, 'Failed to extract thumbnail');
+          }
+        }
+        
         // 2. Upload Processed Artifact to S3
         jobLogger.info('Uploading processed artifact to S3');
         const ext = require("path").extname(result.filePath) || ".mp4";
@@ -115,9 +139,13 @@ export async function setupWorker(logger: Logger) {
           .where(eq(jobs.id, bullJob.data.jobId));
         
         // Enqueue to telegram:upload
-        const uploadData: UploadJobData = {
+        const uploadData = {
           jobId: bullJob.data.jobId,
           processedArtifact: processedArtifactRef,
+          thumbArtifact: thumbArtifactRef,
+          width: postFlightProbe.width,
+          height: postFlightProbe.height,
+          duration: postFlightProbe.duration,
         };
         
         await uploadQueue.add('upload', uploadData, {

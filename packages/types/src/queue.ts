@@ -32,6 +32,10 @@ export interface ProcessJobData {
 export interface UploadJobData {
   jobId: string;
   processedArtifact: S3ArtifactReference;
+  thumbArtifact?: S3ArtifactReference;
+  width?: number;
+  height?: number;
+  duration?: number;
 }
 
 export enum OutboxEventType {

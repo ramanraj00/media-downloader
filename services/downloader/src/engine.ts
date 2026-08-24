@@ -174,7 +174,10 @@ export async function processDownload(job: DownloadJobData, logger: Logger): Pro
       }
 
       // SUCCESS — upload to S3 and return
-      return await uploadAndCleanup(result, bucket, objectKey, logger);
+      const path = require('path');
+      const actualExt = path.extname(result.filePath) || '.mp4';
+      const actualObjectKey = `jobs/${job.jobId}/raw/media${actualExt}`;
+      return await uploadAndCleanup(result, bucket, actualObjectKey, logger);
 
     } catch (error: any) {
       const transition = classifyErrorForTierTransition(error, currentTier, capabilities, logger);
@@ -449,8 +452,14 @@ function classifyErrorForTierTransition(
   capabilities: { supportsAuthenticatedExtraction: boolean; supportsEgressFallback: boolean },
   logger: Logger
 ): TierTransition | null {
-  // Only DIRECT tier can trigger transitions to EGRESS or AUTHENTICATED.
-  // EGRESS and AUTHENTICATED tiers handle their own retry budgets internally.
+  // Allow fallback from EGRESS to AUTHENTICATED if proxy pool is empty/exhausted
+  if (currentTier === 'EGRESS') {
+    if ((error instanceof AuthRequiredError || error.name === 'IdentitiesExhaustedError' || (error as any).type === 'IdentitiesExhaustedError' || error instanceof DatacenterBlockedError) && capabilities.supportsAuthenticatedExtraction) {
+      return { nextTier: 'AUTHENTICATED', reason: 'egress_failed_fallback_to_auth' };
+    }
+    return null;
+  }
+
   if (currentTier !== 'DIRECT') return null;
 
   // GeoBlocked or DatacenterBlocked → route to EGRESS tier (if supported)

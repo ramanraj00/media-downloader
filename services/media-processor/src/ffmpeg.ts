@@ -80,10 +80,20 @@ export async function normalizeVideo(
   }
 
   const isMp4 = probe.container?.includes('mp4') || ext === '.mp4';
-  const isH264 = probe.videoCodec === 'h264';
+  const isH264 = probe.videoCodec === 'h264' || probe.videoCodec === 'hevc';
   const isAac = !selectedAudio || selectedAudio.codec_name === 'aac';
   const isUnderSize = probe.fileSize <= config.MAX_FILE_SIZE;
-  const isCompatible = isMp4 && isH264 && isAac && isUnderSize && !probe.durationMismatch;
+  const isCompatible = isMp4 && isH264 && isAac && isUnderSize;
+  logger.info({
+    isMp4,
+    isH264,
+    isAac,
+    isUnderSize,
+    durationMismatch: probe.durationMismatch,
+    videoCodec: probe.videoCodec,
+    container: probe.container,
+    audioCodec: selectedAudio?.codec_name
+  }, 'Compatibility check results');
 
   if (isCompatible) {
     const outputPath = inputPath.replace(ext, '_faststart.mp4');

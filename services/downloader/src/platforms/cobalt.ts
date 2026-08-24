@@ -45,7 +45,7 @@ export class CobaltAdapter extends PlatformAdapter {
         },
         body: JSON.stringify({
           url: urlStr,
-          videoQuality: '1080'
+          videoQuality: '720'
         })
       });
 
@@ -139,6 +139,13 @@ export class CobaltAdapter extends PlatformAdapter {
   private classifyCobaltError(errorCode: string, contextService: string, httpStatus: number, rawText: string): never {
     // error.api.fetch.fail → The upstream platform rejected Cobalt's request.
     // This is typically a geo-block or datacenter IP block.
+    if (errorCode === 'error.api.fetch.empty' || errorCode.includes('login_required') || errorCode === 'error.api.auth.required') {
+      throw new AuthRequiredError(
+        `Cobalt: Auth required / Empty fetch. Code: ${errorCode}`,
+        contextService || undefined
+      );
+    }
+
     if (errorCode === 'error.api.fetch.fail') {
       // TikTok from India → geo-block (India ban)
       if (contextService === 'tiktok') {

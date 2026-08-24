@@ -25,9 +25,17 @@ export class S3Storage {
     bucket: string,
     objectKey: string,
     localFilePath: string,
-    contentType: string = 'video/mp4'
+    contentType?: string
   ): Promise<S3ArtifactReference> {
     
+    if (!contentType) {
+      const ext = require('path').extname(objectKey).toLowerCase();
+      if (['.jpg', '.jpeg'].includes(ext)) contentType = 'image/jpeg';
+      else if (ext === '.png') contentType = 'image/png';
+      else if (ext === '.webp') contentType = 'image/webp';
+      else contentType = 'video/mp4';
+    }
+
     // Read and calculate hash
     const data = await fs.readFile(localFilePath);
     const hashSum = crypto.createHash('sha256');
