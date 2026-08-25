@@ -7,11 +7,11 @@ import { QUEUES, UploadJobData, JobStatus } from '@media-downloader/types';
 import { db, jobs, users, media } from '@media-downloader/db';
 import { eq, sql } from 'drizzle-orm';
 import { uploadToTelegram } from './uploader';
-import { S3Storage } from '@media-downloader/core';
+import { LocalArtifactStorage } from '@media-downloader/core';
 import fs from 'fs';
 import path from 'path';
 
-const s3 = new S3Storage();
+const s3 = new LocalArtifactStorage();
 
 export async function setupWorker(logger: Logger) {
   const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });

@@ -7,12 +7,12 @@ import { QUEUES, ProcessJobData, JobStatus, UploadJobData } from '@media-downloa
 import { users, jobs, db } from '@media-downloader/db';
 import { eq, sql } from 'drizzle-orm';
 import { normalizeVideo } from './ffmpeg';
-import { calculateFileHash, S3Storage } from '@media-downloader/core';
+import { calculateFileHash, LocalArtifactStorage } from '@media-downloader/core';
 import { runProbe, determineMediaType } from './probe';
 import fs from 'fs/promises';
 import path from 'path';
 
-const s3 = new S3Storage();
+const s3 = new LocalArtifactStorage();
 
 export async function setupWorker(logger: Logger) {
   const connection = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });

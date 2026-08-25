@@ -1,4 +1,4 @@
-import { S3Storage, calculateFileHash } from '@media-downloader/core';
+import { LocalArtifactStorage, calculateFileHash } from '@media-downloader/core';
 import { processDownload, identityPool } from './engine';
 import { DownloadJobData, Platform } from '@media-downloader/types';
 import { Logger } from 'pino';
@@ -21,8 +21,8 @@ async function runTests() {
 
   let s3;
   try {
-    s3 = new S3Storage();
-    await s3.init();
+    s3 = new LocalArtifactStorage();
+    
 
     // Reset S3
     await fs.rm(mockS3Dir, { recursive: true, force: true });

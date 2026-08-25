@@ -43,14 +43,14 @@ const configSchema = z.object({
   CACHE_TTL_SECONDS: z.coerce.number().default(86400),
   
   // Cobalt Fallback
-  COBALT_URL: z.string().default('http://cobalt.internal:9000'),
+  COBALT_URL: z.string().default('http://cobalt:9000'),
   COBALT_ADMISSION_LIMIT: z.coerce.number().default(10),
   COBALT_API_KEY: z.string().default(''),
   
   // API
   API_PORT: z.coerce.number().default(3000),
   API_HOST: z.string().default('0.0.0.0'),
-  API_URL: z.string().default('http://localhost:3000'),
+  API_URL: z.string().default('http://api:3000'),
 });
 
 export type Config = z.infer<typeof configSchema>;

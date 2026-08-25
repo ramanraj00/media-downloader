@@ -3,33 +3,38 @@ import fs from 'fs/promises';
 import { createReadStream, createWriteStream } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { Readable } from 'stream';
-import { pipeline } from 'stream/promises';
 
-export class S3Storage {
-  private s3Client: S3Client;
+export class LocalArtifactStorage {
+  private baseDir: string;
 
   constructor() {
-    this.s3Client = new S3Client({ region: 'ap-south-1' });
+    this.baseDir = process.env.ARTIFACTS_DIR || '/app/artifacts';
   }
 
   async init() {
-    // S3 requires no local initialization
+    await fs.mkdir(this.baseDir, { recursive: true });
+  }
+
+  /**
+   * Get the absolute path for an object key
+   */
+  private getPath(objectKey: string): string {
+    return path.join(this.baseDir, objectKey);
   }
 
   /**
    * Idempotent upload with SHA-256 generation.
    */
   async putArtifact(
-    bucket: string,
+    bucket: string, // Kept for interface compatibility but ignored
     objectKey: string,
     localFilePath: string,
     contentType?: string
   ): Promise<S3ArtifactReference> {
     
     if (!contentType) {
-      const ext = require('path').extname(objectKey).toLowerCase();
+      const ext = path.extname(objectKey).toLowerCase();
       if (['.jpg', '.jpeg'].includes(ext)) contentType = 'image/jpeg';
       else if (ext === '.png') contentType = 'image/png';
       else if (ext === '.webp') contentType = 'image/webp';
@@ -42,21 +47,12 @@ export class S3Storage {
     hashSum.update(data);
     const contentHash = hashSum.digest('hex');
 
-    // S3 PUT
-    const command = new PutObjectCommand({
-      Bucket: bucket,
-      Key: objectKey,
-      Body: data,
-      ContentType: contentType,
-      Metadata: {
-        'content-hash': contentHash
-      }
-    });
-
-    await this.s3Client.send(command);
+    const destPath = this.getPath(objectKey);
+    await fs.mkdir(path.dirname(destPath), { recursive: true });
+    await fs.copyFile(localFilePath, destPath);
 
     return {
-      bucket,
+      bucket: 'local',
       objectKey,
       sizeBytes: data.length,
       contentType,
@@ -69,8 +65,7 @@ export class S3Storage {
    */
   async artifactExists(bucket: string, objectKey: string): Promise<boolean> {
     try {
-      const command = new HeadObjectCommand({ Bucket: bucket, Key: objectKey });
-      await this.s3Client.send(command);
+      await fs.access(this.getPath(objectKey));
       return true;
     } catch {
       return false;
@@ -81,11 +76,17 @@ export class S3Storage {
    * Get artifact metadata without downloading
    */
   async getArtifactMetadata(bucket: string, objectKey: string): Promise<{ sizeBytes: number; contentHash: string }> {
-    const command = new HeadObjectCommand({ Bucket: bucket, Key: objectKey });
-    const response = await this.s3Client.send(command);
+    const destPath = this.getPath(objectKey);
+    const stat = await fs.stat(destPath);
+    
+    const data = await fs.readFile(destPath);
+    const hashSum = crypto.createHash('sha256');
+    hashSum.update(data);
+    const contentHash = hashSum.digest('hex');
+
     return {
-      sizeBytes: response.ContentLength || 0,
-      contentHash: response.Metadata?.['content-hash'] || '',
+      sizeBytes: stat.size,
+      contentHash,
     };
   }
 
@@ -96,29 +97,24 @@ export class S3Storage {
     ref: S3ArtifactReference,
     destinationPath: string
   ): Promise<void> {
-    let response;
+    const srcPath = this.getPath(ref.objectKey);
+    
     try {
-      const command = new GetObjectCommand({ Bucket: ref.bucket, Key: ref.objectKey });
-      response = await this.s3Client.send(command);
-    } catch (e: any) {
-      throw new Error(`S3 Object not found: ${ref.bucket}/${ref.objectKey}`);
-    }
-
-    if (!response.Body) {
-      throw new Error(`S3 Object body empty: ${ref.bucket}/${ref.objectKey}`);
+      await fs.access(srcPath);
+    } catch {
+      throw new Error(`Artifact not found on local disk: ${ref.objectKey}`);
     }
 
     await fs.mkdir(path.dirname(destinationPath), { recursive: true });
 
     // Stream download and verify hash
     const hashSum = crypto.createHash('sha256');
+    const readStream = createReadStream(srcPath);
     const writeStream = createWriteStream(destinationPath);
     
-    const body = response.Body as NodeJS.ReadableStream;
-    
     return new Promise((resolve, reject) => {
-        body.on('data', (chunk) => hashSum.update(chunk));
-        body.pipe(writeStream)
+        readStream.on('data', (chunk) => hashSum.update(chunk));
+        readStream.pipe(writeStream)
             .on('finish', () => {
                 const actualHash = hashSum.digest('hex');
                 if (actualHash !== ref.contentHash) {
@@ -129,5 +125,13 @@ export class S3Storage {
             })
             .on('error', reject);
     });
+  }
+
+  /**
+   * Get as stream (used by delivery)
+   */
+  async getArtifactStream(bucket: string, objectKey: string): Promise<Readable> {
+    const srcPath = this.getPath(objectKey);
+    return createReadStream(srcPath);
   }
 }

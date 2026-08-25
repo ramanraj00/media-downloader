@@ -2,73 +2,142 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:15
+    image: postgres:15-alpine
+    restart: always
     environment:
-      POSTGRES_USER: dev
-      POSTGRES_PASSWORD: dev
-      POSTGRES_DB: mediadl
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mediabot
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mediabot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
-    image: redis:7
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  cobalt:
+    image: ghcr.io/imputnet/cobalt:11.7.1-a636575
+    restart: always
+    environment:
+      - API_PORT=9000
+      - API_URL=http://cobalt:9000/
+      - CORS=1
     ports:
-      - "6379:6379"
+      - "9000:9000"
+
+  api:
+    build: .
+    restart: always
+    command: ["node", "apps/api/dist/index.js"]
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://postgres:password@postgres:5432/mediabot
+      - REDIS_URL=redis://redis:6379
+      - PORT=3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   bot:
     build: .
-    command: node apps/bot/dist/index.js
+    restart: always
+    command: ["node", "apps/bot/dist/index.js"]
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgres://dev:dev@postgres:5432/mediadl
+      - BOT_TOKEN=${BOT_TOKEN}
+      - API_URL=http://api:3000
+    depends_on:
+      api:
+        condition: service_started
+
+  relay:
+    build: .
+    restart: always
+    command: ["node", "services/relay/dist/index.js"]
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgres://postgres:password@postgres:5432/mediabot
       - REDIS_URL=redis://redis:6379
+      - API_URL=http://api:3000
       - BOT_TOKEN=${BOT_TOKEN}
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   downloader:
     build: .
-    command: node services/downloader/dist/index.js
+    restart: always
+    command: ["node", "services/downloader/dist/index.js"]
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgres://dev:dev@postgres:5432/mediadl
+      - DATABASE_URL=postgres://postgres:password@postgres:5432/mediabot
       - REDIS_URL=redis://redis:6379
-      - AWS_REGION=${AWS_REGION}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - S3_BUCKET=${S3_BUCKET}
+      - COBALT_URL=http://cobalt:9000/
+      - ARTIFACTS_DIR=/app/artifacts
+    volumes:
+      - artifacts-data:/app/artifacts
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      cobalt:
+        condition: service_started
 
   processor:
     build: .
-    command: node services/media-processor/dist/index.js
+    restart: always
+    command: ["node", "services/media-processor/dist/index.js"]
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgres://dev:dev@postgres:5432/mediadl
+      - DATABASE_URL=postgres://postgres:password@postgres:5432/mediabot
       - REDIS_URL=redis://redis:6379
-      - AWS_REGION=${AWS_REGION}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - S3_BUCKET=${S3_BUCKET}
+      - ARTIFACTS_DIR=/app/artifacts
+    volumes:
+      - artifacts-data:/app/artifacts
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   delivery:
     build: .
-    command: node services/delivery/dist/index.js
+    restart: always
+    command: ["node", "services/delivery/dist/index.js"]
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgres://dev:dev@postgres:5432/mediadl
+      - DATABASE_URL=postgres://postgres:password@postgres:5432/mediabot
       - REDIS_URL=redis://redis:6379
       - BOT_TOKEN=${BOT_TOKEN}
-      - AWS_REGION=${AWS_REGION}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - S3_BUCKET=${S3_BUCKET}
+      - ARTIFACTS_DIR=/app/artifacts
+    volumes:
+      - artifacts-data:/app/artifacts
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:
+  artifacts-data:

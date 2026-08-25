@@ -17,7 +17,7 @@ import {
   IdentitiesExhaustedError,
   DistributedCircuitBreaker,
   CredentialPool,
-  S3Storage,
+  LocalArtifactStorage,
   AccessBlockedError,
   GeoBlockedError,
   DatacenterBlockedError,
@@ -25,7 +25,7 @@ import {
   CircuitBreakerOpenError,
 } from '@media-downloader/core';
 import Redis from 'ioredis';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
+
 
 import { PlatformAdapter } from './platforms/adapter';
 
@@ -60,7 +60,7 @@ const TIER4_MAX_AUTH_ATTEMPTS = 1;      // Max cookie credentials to try
 
 // ─── Infrastructure ──────────────────────────────────────────────────────────
 
-const s3 = new S3Storage();
+const s3 = new LocalArtifactStorage();
 
 const distributedBreakers: Partial<Record<string, DistributedCircuitBreaker>> = {
   [Platform.INSTAGRAM]: new DistributedCircuitBreaker({ redisUrl: config.REDIS_URL, name: 'instagram', failureThreshold: config.CB_FAILURE_THRESHOLD, resetTimeoutMs: config.CB_RESET_TIMEOUT_MS }),
@@ -71,7 +71,7 @@ const distributedBreakers: Partial<Record<string, DistributedCircuitBreaker>> = 
 
 export const identityPool = new CredentialPool({ redisUrl: config.REDIS_URL });
 const redisClient = new Redis(config.REDIS_URL, { maxRetriesPerRequest: null });
-const secretsManager = new SecretsManagerClient({ region: 'ap-south-1' });
+
 
 // ─── Extraction State Machine ────────────────────────────────────────────────
 
@@ -377,14 +377,7 @@ async function executeAuthenticated(
     try {
       let cookieString = authAcq.encryptedData;
       
-      // Check if the credential is a Secrets Manager reference
-      if (cookieString.startsWith('/media-downloader/') || cookieString.startsWith('arn:aws:secretsmanager')) {
-        const command = new GetSecretValueCommand({ SecretId: cookieString });
-        const secretResponse = await secretsManager.send(command);
-        if (secretResponse.SecretString) {
-          cookieString = secretResponse.SecretString;
-        }
-      }
+
 
       fs.writeFileSync(cookiePath, cookieString, { mode: 0o600 });
       logger.info({

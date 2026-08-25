@@ -9,5 +9,5 @@ export * from './classifiers/types';
 export * from './retry';
 export * from './hash';
 export * from './credentialPool';
-export * from './s3';
+export * from './storage';
 export * from './admission';
